@@ -1,0 +1,43 @@
+# Tasks
+
+## Project Setup
+- [ ] Initialize Cargo workspace with dependencies (wgpu, winit, glam, bincode) → `cargo check` succeeds with no errors
+- [ ] Create basic project structure with lib.rs and bin stubs → `cargo build` compiles both `client` and `server` binaries
+
+## Core Infrastructure
+- [ ] Implement shared types (PlayerState, packet types, constants) → `cargo test` passes for serialization round-trip tests
+- [ ] Implement network packet serialization/deserialization → Unit tests verify encode/decode of all packet types
+
+## Server Implementation
+- [ ] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
+- [ ] Implement player state management (join, update, timeout) → Integration test: fake client sends packets, server tracks player
+- [ ] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
+
+## Client Rendering Foundation
+- [ ] Set up wgpu + winit window with basic render loop → Window opens, clears to sky blue, runs at 60fps
+- [ ] Implement perspective camera with view/projection matrices → Cube rendered at origin appears in 3D perspective
+- [ ] Create simple colored mesh rendering (cube primitive) → Colored cube renders correctly on screen
+
+## Client Scene
+- [ ] Render ground plane at y=0 → Gray 50×50 quad visible in scene
+- [ ] Render humanoid character from basic shapes → Multi-part character (head, torso, arms, legs) visible
+- [ ] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
+
+## Client Input & Movement
+- [ ] Implement mouse capture and look controls → Mouse captured, moving mouse rotates camera/player yaw
+- [ ] Implement WASD movement relative to facing direction → Character moves forward/back/strafe based on input
+
+## Client Camera
+- [ ] Implement third-person camera following player → Camera stays 5 units behind, 2 units up, follows rotation
+
+## Client Networking
+- [ ] Send PlayerUpdate packets to server at 20Hz → Wireshark/server logs show packets arriving
+- [ ] Receive and parse WorldState packets from server → Console logs other player positions when received
+- [ ] Render other players from received world state → Second client's character visible and moves correctly
+
+## Integration
+- [ ] Handle player join/leave (character appears/disappears) → Start/stop second client, character appears/disappears on first
+- [ ] End-to-end test: two clients see each other move → Two clients on same machine can see each other's movement
+
+## Cross-Platform & CI
+- [ ] Add GitHub Actions workflow for Mac and Windows builds → Push to repo, both builds succeed in Actions
