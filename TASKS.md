@@ -2,7 +2,7 @@
 
 ## Project Setup
 - [x] Initialize Cargo workspace with dependencies (wgpu, winit, glam, bincode) → `cargo check` succeeds with no errors
-- [ ] Create basic project structure with lib.rs and bin stubs → `cargo build` compiles both `client` and `server` binaries
+- [x] Create basic project structure with lib.rs and bin stubs → `cargo build` compiles both `client` and `server` binaries
 
 ## Core Infrastructure
 - [ ] Implement shared types (PlayerState, packet types, constants) → `cargo test` passes for serialization round-trip tests
