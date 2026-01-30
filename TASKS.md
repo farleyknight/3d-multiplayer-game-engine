@@ -1,7 +1,7 @@
 # Tasks
 
 ## Project Setup
-- [ ] Initialize Cargo workspace with dependencies (wgpu, winit, glam, bincode) → `cargo check` succeeds with no errors
+- [x] Initialize Cargo workspace with dependencies (wgpu, winit, glam, bincode) → `cargo check` succeeds with no errors
 - [ ] Create basic project structure with lib.rs and bin stubs → `cargo build` compiles both `client` and `server` binaries
 
 ## Core Infrastructure
