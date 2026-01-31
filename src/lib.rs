@@ -335,7 +335,7 @@ mod tests {
         let data = PlayerData {
             player_id: 99,
             position: Vec3::new(-5.0, 0.0, 10.0),
-            rotation_yaw: 3.14,
+            rotation_yaw: std::f32::consts::PI,
         };
 
         let bytes = bincode::serialize(&data).expect("serialize failed");
@@ -393,7 +393,7 @@ mod tests {
             PlayerData {
                 player_id: 3,
                 position: Vec3::new(-10.0, 2.0, 8.0),
-                rotation_yaw: 3.14,
+                rotation_yaw: std::f32::consts::PI,
             },
         ];
         let packet = ServerPacket::WorldState { players };
@@ -474,5 +474,24 @@ mod tests {
         let local_addr = socket.local_addr().expect("Failed to get local address");
 
         assert!(local_addr.port() > 0);
+    }
+
+    #[test]
+    fn test_render_window_title() {
+        use crate::render::WINDOW_TITLE;
+
+        assert_eq!(WINDOW_TITLE, "3D Multiplayer Game");
+    }
+
+    #[test]
+    fn test_render_sky_blue_color() {
+        use crate::render::SKY_BLUE;
+
+        // Sky blue is #87CEEB = RGB(135, 206, 235)
+        const TOLERANCE: f64 = 0.001;
+        assert!((SKY_BLUE.r - 135.0 / 255.0).abs() < TOLERANCE);
+        assert!((SKY_BLUE.g - 206.0 / 255.0).abs() < TOLERANCE);
+        assert!((SKY_BLUE.b - 235.0 / 255.0).abs() < TOLERANCE);
+        assert!((SKY_BLUE.a - 1.0).abs() < TOLERANCE);
     }
 }
