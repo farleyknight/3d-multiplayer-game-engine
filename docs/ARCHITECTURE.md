@@ -200,3 +200,214 @@ VoxelWorld
 1. **VoxelWorld** contains multiple **Chunks** indexed by chunk coordinates
 2. Each **Chunk** contains a 16x16x16 array of optional **BlockTypes**
 3. **PlayerState** exists separately and tracks player position/rotation within this world
+
+## Input Handling Architecture
+
+This section documents how keyboard and mouse inputs are captured and translated into player movement, jumping, and block interaction.
+
+### Input Capture (winit Event Loop)
+
+All input handling occurs within the winit event loop in `src/bin/client.rs:313-651`. The event loop processes:
+
+- **WindowEvent::KeyboardInput** - WASD/Space key presses (line 321-355)
+- **WindowEvent::MouseInput** - Left/Right click for block interaction (line 383-399)
+- **DeviceEvent::MouseMotion** - Mouse delta for camera/look controls (line 627-644)
+
+### Key State Tracking
+
+Key states are tracked using boolean flags that persist between frames:
+
+```rust
+// Track WASD key press state for movement (src/bin/client.rs:295-299)
+let mut w_pressed = false;
+let mut a_pressed = false;
+let mut s_pressed = false;
+let mut d_pressed = false;
+let mut space_pressed = false;
+```
+
+On each `KeyboardInput` event, the flag is set `true` when pressed and `false` when released:
+
+```rust
+let pressed = state == ElementState::Pressed;
+match key_code {
+    KeyCode::KeyW => w_pressed = pressed,
+    KeyCode::KeyA => a_pressed = pressed,
+    KeyCode::KeyS => s_pressed = pressed,
+    KeyCode::KeyD => d_pressed = pressed,
+    KeyCode::Space => space_pressed = pressed,
+    _ => {}
+}
+```
+
+Reference: `src/bin/client.rs:346-354`
+
+### Key Mappings
+
+| Key | Action | State Variable |
+|-----|--------|----------------|
+| W | Move forward | `w_pressed` |
+| A | Move left (strafe) | `a_pressed` |
+| S | Move backward | `s_pressed` |
+| D | Move right (strafe) | `d_pressed` |
+| Space | Jump | `space_pressed` |
+| Escape | Exit game | (immediate exit) |
+| Left Mouse | Destroy block | `left_mouse_clicked` |
+| Right Mouse | Place block | `right_mouse_clicked` |
+
+### Movement Processing
+
+Movement is calculated per frame when the cursor is captured. The process:
+
+1. **Calculate forward direction** from player yaw using spherical coordinates:
+   ```rust
+   // Player faces -Z when yaw = 0 (src/bin/client.rs:412-416)
+   let forward = Vec3::new(
+       -player.rotation_yaw.sin(),
+       0.0,
+       -player.rotation_yaw.cos(),
+   );
+   ```
+
+2. **Calculate right direction** perpendicular to forward in the XZ plane:
+   ```rust
+   // Right is 90 degrees clockwise from forward (src/bin/client.rs:418)
+   let right = Vec3::new(forward.z, 0.0, -forward.x);
+   ```
+
+3. **Accumulate movement** based on pressed keys:
+   ```rust
+   let mut movement = Vec3::ZERO;
+   if w_pressed { movement += forward; }
+   if s_pressed { movement -= forward; }
+   if a_pressed { movement -= right; }
+   if d_pressed { movement += right; }
+   ```
+
+4. **Normalize and apply** to prevent faster diagonal movement:
+   ```rust
+   if movement.length_squared() > 0.0 {
+       movement = movement.normalize() * MOVE_SPEED * delta_time;
+       player.position += movement;
+   }
+   ```
+
+Reference: `src/bin/client.rs:408-438`
+
+### Movement Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MOVE_SPEED` | 5.0 | Units per second |
+| `MOUSE_SENSITIVITY` | 0.003 | Radians per pixel of mouse movement |
+
+### Jump Mechanics
+
+Jumping uses a simple velocity-based system with ground detection:
+
+1. **Ground check**: Player is on ground when `position.y <= GROUND_Y`
+2. **Jump trigger**: When Space is pressed AND player is on ground
+3. **Apply jump**: Set `velocity_y = JUMP_VELOCITY` (8.0 units/s upward)
+4. **Gravity**: Each frame: `velocity_y -= GRAVITY * delta_time`
+5. **Position update**: `position.y += velocity_y * delta_time`
+6. **Floor collision**: If `position.y < GROUND_Y`, clamp to ground and reset velocity
+
+```rust
+// Jump when space pressed and on ground (src/bin/client.rs:441-444)
+if space_pressed && player.position.y <= GROUND_Y {
+    velocity_y = JUMP_VELOCITY;
+}
+
+// Apply gravity (src/bin/client.rs:446-447)
+velocity_y -= GRAVITY * delta_time;
+position.y += velocity_y * delta_time;
+
+// Floor collision (src/bin/client.rs:452-456)
+if player.position.y < GROUND_Y {
+    player.position.y = GROUND_Y;
+    velocity_y = 0.0;
+}
+```
+
+### Physics Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `GROUND_Y` | 0.0 | Floor level (Y coordinate) |
+| `GRAVITY` | 20.0 | Downward acceleration (units/s²) |
+| `JUMP_VELOCITY` | 8.0 | Initial upward velocity when jumping (units/s) |
+
+### Mouse Input (Look Controls)
+
+Mouse movement controls the player's horizontal look direction (yaw) and vertical look angle (pitch):
+
+1. **Yaw update**: Horizontal mouse movement rotates the player:
+   ```rust
+   // Negative because moving mouse right should rotate clockwise
+   player.rotation_yaw -= delta.0 as f32 * MOUSE_SENSITIVITY;
+   ```
+
+2. **Pitch update**: Vertical mouse movement tilts the view (used for block raycasting):
+   ```rust
+   pitch -= delta.1 as f32 * MOUSE_SENSITIVITY;
+   pitch = pitch.clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+   ```
+
+3. **Cursor capture**: Mouse look only works when the window is focused and cursor is captured (`cursor_captured = true`).
+
+Reference: `src/bin/client.rs:627-644`
+
+### Block Interaction (Mouse Clicks)
+
+Block placement and destruction use raycasting from the player's eye position:
+
+1. **Ray origin**: Player position + eye height offset (`EYE_HEIGHT = 1.6`)
+2. **Ray direction**: Calculated from yaw and pitch using spherical coordinates:
+   ```rust
+   let ray_direction = Vec3::new(
+       -player.rotation_yaw.sin() * pitch.cos(),
+       pitch.sin(),
+       -player.rotation_yaw.cos() * pitch.cos(),
+   ).normalize();
+   ```
+
+3. **Raycast**: Check for block intersection within `BLOCK_REACH_DISTANCE` (5.0 units)
+4. **Left click**: Destroy the hit block
+5. **Right click**: Place a block adjacent to the hit face (using face normal)
+
+Reference: `src/bin/client.rs:459-505`
+
+### Block Interaction Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `BLOCK_REACH_DISTANCE` | 5.0 | Maximum distance for block interaction (units) |
+| `EYE_HEIGHT` | 1.6 | Height offset from player position for raycasting (units) |
+
+### Input Flow Summary
+
+```
+Keyboard Input                    Mouse Input
+      │                                │
+      ▼                                ▼
+WindowEvent::KeyboardInput    DeviceEvent::MouseMotion
+      │                                │
+      ▼                                ▼
+Update boolean flags           Update yaw/pitch
+(w/a/s/d/space_pressed)              │
+      │                                │
+      ▼                                ▼
+Calculate forward/right ◄──────── Player yaw
+      │
+      ▼
+Normalize movement vector
+      │
+      ▼
+Apply: position += movement * MOVE_SPEED * dt
+      │
+      ▼
+Jump check → Apply gravity → Floor collision
+      │
+      ▼
+Update camera position to follow player
+```

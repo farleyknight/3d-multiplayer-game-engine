@@ -90,7 +90,7 @@
 - [x] Add: Create docs/ directory for architecture documentation → `ls docs/` shows the directory exists
 - [x] Add: Document game state representation in docs/ARCHITECTURE.md → File explains PlayerState struct, position/rotation fields, VoxelWorld, and Chunk structures
 - [x] Add: Document player location tracking in docs/ARCHITECTURE.md → Section explains how player position (Vec3) is stored, updated via movement/physics, and synchronized over network
-- [ ] Add: Document input handling architecture in docs/ARCHITECTURE.md → Section explains how WASD/SpaceBar inputs are captured and translated to movement/jump actions
+- [x] Add: Document input handling architecture in docs/ARCHITECTURE.md → Section explains how WASD/SpaceBar inputs are captured and translated to movement/jump actions
 
 ## Input Simulation Infrastructure
 - [ ] Add: Create InputSimulator module for integration tests → New module in src/lib.rs or src/input.rs that can simulate WASD+SpaceBar input events
