@@ -357,6 +357,58 @@ pub mod render {
         pub color: [f32; 3],
     }
 
+    /// Dynamic box that can be moved at runtime (e.g., pushable boxes).
+    /// Unlike StaticObject, DynamicBox positions can change during gameplay.
+    #[derive(Debug, Clone, Copy)]
+    pub struct DynamicBox {
+        /// Center position of the box in world space
+        pub position: Vec3,
+        /// Size of the box (width, height, depth)
+        pub size: (f32, f32, f32),
+        /// RGB color of the box
+        pub color: [f32; 3],
+    }
+
+    impl DynamicBox {
+        /// Create a new dynamic box with the given parameters.
+        pub fn new(position: Vec3, size: (f32, f32, f32), color: [f32; 3]) -> Self {
+            Self { position, size, color }
+        }
+    }
+
+    /// Build mesh vertices and indices for a single dynamic box.
+    /// Returns (vertices, indices) that can be used to create GPU buffers.
+    pub fn build_dynamic_box_mesh(dynamic_box: &DynamicBox) -> (Vec<Vertex>, Vec<u16>) {
+        let vertices = create_cube_vertices(
+            dynamic_box.size,
+            (dynamic_box.position.x, dynamic_box.position.y, dynamic_box.position.z),
+            dynamic_box.color,
+        );
+        let indices = create_cube_indices(0);
+        (vertices.to_vec(), indices.to_vec())
+    }
+
+    /// Build mesh vertices and indices for multiple dynamic boxes.
+    /// Returns combined (vertices, indices) for all boxes.
+    pub fn build_dynamic_boxes_mesh(boxes: &[DynamicBox]) -> (Vec<Vertex>, Vec<u16>) {
+        let mut vertices = Vec::with_capacity(boxes.len() * 8);
+        let mut indices = Vec::with_capacity(boxes.len() * 36);
+
+        for (i, dynamic_box) in boxes.iter().enumerate() {
+            let cube_verts = create_cube_vertices(
+                dynamic_box.size,
+                (dynamic_box.position.x, dynamic_box.position.y, dynamic_box.position.z),
+                dynamic_box.color,
+            );
+            vertices.extend_from_slice(&cube_verts);
+
+            let cube_indices = create_cube_indices((i * 8) as u16);
+            indices.extend_from_slice(&cube_indices);
+        }
+
+        (vertices, indices)
+    }
+
     // Colors for static objects
     const GRAY: [f32; 3] = [0.5, 0.5, 0.5];
     const DARK_GRAY: [f32; 3] = [0.3, 0.3, 0.3];
@@ -878,6 +930,166 @@ pub mod render {
 
         /// Get a reference to the render texture for screenshot capture
         pub fn render_texture(&self) -> &wgpu::Texture {
+            &self.render_texture
+        }
+
+        /// Render a frame with the local player, other players, and dynamic boxes.
+        /// Returns a reference to the render texture for screenshot capture.
+        pub fn render_with_players_and_boxes(
+            &mut self,
+            local_position: Vec3,
+            local_rotation_yaw: f32,
+            other_players: &[(Vec3, f32)],
+            dynamic_boxes: &[DynamicBox],
+        ) -> &wgpu::Texture {
+            let view = self.render_texture.create_view(&TextureViewDescriptor::default());
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Headless Render Encoder"),
+                });
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(SKY_BLUE),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.pipeline);
+
+                // Draw ground plane first (identity model matrix)
+                let ground_mvp = self.camera.view_projection_matrix();
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[ground_mvp]));
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
+
+                // Draw static environment objects (identity model matrix, same MVP)
+                render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
+
+                // Draw cube (for reference, identity model matrix)
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+
+            // Draw dynamic boxes
+            if !dynamic_boxes.is_empty() {
+                let (box_vertices, box_indices) = build_dynamic_boxes_mesh(dynamic_boxes);
+                let box_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Dynamic Box Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&box_vertices),
+                    usage: BufferUsages::VERTEX,
+                });
+                let box_index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Dynamic Box Index Buffer"),
+                    contents: bytemuck::cast_slice(&box_indices),
+                    usage: BufferUsages::INDEX,
+                });
+                let box_num_indices = box_indices.len() as u32;
+
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Dynamic Boxes Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                // Dynamic boxes use identity model matrix (positions baked into vertices)
+                let mvp = self.camera.view_projection_matrix();
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, box_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(box_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..box_num_indices, 0, 0..1);
+            }
+
+            // Draw local player (blue humanoid) at their position
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Local Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(local_position, local_rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.humanoid_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.humanoid_num_indices, 0, 0..1);
+            }
+
+            // Draw each other player (red humanoid) at their position
+            for (position, rotation_yaw) in other_players {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Other Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(*position, *rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.other_player_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.other_player_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.other_player_num_indices, 0, 0..1);
+            }
+
+            self.queue.submit(std::iter::once(encoder.finish()));
+
             &self.render_texture
         }
     }
