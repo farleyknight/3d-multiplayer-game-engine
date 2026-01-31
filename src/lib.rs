@@ -1068,6 +1068,7 @@ pub mod render {
         static_objects_index_buffer: Buffer,
         static_objects_num_indices: u32,
         uniform_buffer: Buffer,
+        #[allow(dead_code)] // Scaffolding for future lighting features
         light_uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
@@ -1105,6 +1106,7 @@ pub mod render {
         textured_bind_group: BindGroup,
         textured_pipeline: RenderPipeline,
         uniform_buffer: Buffer,
+        #[allow(dead_code)] // Scaffolding for future lighting features
         light_uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
