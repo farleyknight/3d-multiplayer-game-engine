@@ -60,6 +60,65 @@ fn test_wasd_input_simulation_w_key_moves_forward() {
     );
 }
 
+/// Tests that pressing the SpaceBar causes the player to jump (Y position increases).
+///
+/// When on the ground and SpaceBar is pressed, the player should receive an upward velocity
+/// and their Y position should increase above GROUND_Y.
+#[test]
+#[cfg(feature = "test-helpers")]
+fn test_spacebar_input_simulation_jump() {
+    use game_engine::physics::{PhysicsState, GROUND_Y};
+
+    // Create a fresh InputSimulator
+    let mut input = InputSimulator::new();
+
+    // Create player position at ground level
+    let mut position = Vec3::new(0.0, GROUND_Y, 0.0);
+
+    // Create physics state (starts on ground)
+    let mut physics = PhysicsState::new();
+
+    // Store initial Y position
+    let initial_y = position.y;
+
+    // Simulate pressing the Space key
+    input.press_key(KeyCode::Space);
+
+    // Update player physics to process the jump
+    let delta_time = 1.0 / 60.0; // Standard 60 FPS frame
+    input.update_player_physics(&mut position, &mut physics, delta_time);
+
+    // Assert player jumped (Y position increased)
+    assert!(
+        position.y > initial_y,
+        "Expected player to jump (Y increased). Initial Y: {}, Current Y: {}",
+        initial_y,
+        position.y
+    );
+
+    // Assert physics velocity is positive (upward)
+    assert!(
+        physics.velocity_y > 0.0,
+        "Expected positive velocity after jump, got: {}",
+        physics.velocity_y
+    );
+
+    // Assert player is no longer on ground
+    assert!(
+        !physics.on_ground,
+        "Expected player to be off ground after jump"
+    );
+
+    // Print verification message
+    println!(
+        "SpaceBar jump test passed: Y changed from {} to {} (delta: {}), velocity_y: {}",
+        initial_y,
+        position.y,
+        position.y - initial_y,
+        physics.velocity_y
+    );
+}
+
 /// Tests that all WASD keys produce movement in the expected directions.
 #[test]
 #[cfg(feature = "test-helpers")]

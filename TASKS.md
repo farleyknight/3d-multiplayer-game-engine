@@ -99,7 +99,7 @@
 
 ## Integration Tests with Input Simulation
 - [x] Add: Integration test proving WASD input simulation works → Test uses InputSimulator to send W key, asserts player.position.z changed (moved forward) → Note: Requires `--features test-helpers` flag for integration tests
-- [ ] Add: Integration test proving SpaceBar input simulation works → Test uses InputSimulator to send Space key, asserts player.position.y increased (jumped)
+- [x] Add: Integration test proving SpaceBar input simulation works → Test uses InputSimulator to send Space key, asserts player.position.y increased (jumped)
 - [ ] Add: Integration test verifying movement state changes from all WASD keys → Test sends W/A/S/D keys sequentially, logs and asserts each position change in game state
 - [ ] Add: Integration test verifying combined movement+jump input → Test sends W+Space simultaneously, asserts player moved forward AND jumped
 
