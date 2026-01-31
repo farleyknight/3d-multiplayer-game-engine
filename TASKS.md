@@ -98,7 +98,7 @@
 - [x] Add: InputSimulator integrates with game loop for state updates → Simulated inputs trigger actual movement/physics code paths instead of direct position modification → Note: Added physics module with process_movement() and apply_physics() functions; InputSimulator now has update_player_movement() and update_player_physics() methods
 
 ## Integration Tests with Input Simulation
-- [ ] Add: Integration test proving WASD input simulation works → Test uses InputSimulator to send W key, asserts player.position.z changed (moved forward)
+- [x] Add: Integration test proving WASD input simulation works → Test uses InputSimulator to send W key, asserts player.position.z changed (moved forward) → Note: Requires `--features test-helpers` flag for integration tests
 - [ ] Add: Integration test proving SpaceBar input simulation works → Test uses InputSimulator to send Space key, asserts player.position.y increased (jumped)
 - [ ] Add: Integration test verifying movement state changes from all WASD keys → Test sends W/A/S/D keys sequentially, logs and asserts each position change in game state
 - [ ] Add: Integration test verifying combined movement+jump input → Test sends W+Space simultaneously, asserts player moved forward AND jumped
