@@ -3,6 +3,10 @@ name = "game-engine"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+test-helpers = ["dep:image"]
+
 [dependencies]
 wgpu = "0.19"
 winit = "0.29"
@@ -25,3 +29,11 @@ path = "src/bin/server.rs"
 [lib]
 name = "game_engine"
 path = "src/lib.rs"
+
+[dev-dependencies]
+image = "0.24"
+
+# image is also an optional regular dependency for the test-helpers feature
+[dependencies.image]
+version = "0.24"
+optional = true

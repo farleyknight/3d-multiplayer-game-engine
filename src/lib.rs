@@ -4,6 +4,10 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+/// Test helper utilities (only available when running tests or for integration tests)
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_helpers;
+
 /// Version of the game engine
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
