@@ -85,3 +85,29 @@
 - [x] Add: Integration test with video output for movement → `tests/videos/movement_test.mp4` shows player WASD movement
 - [x] Add: Integration test with video output for jumping → `tests/videos/jump_test.mp4` shows player jumping
 - [x] Add: Integration test with video output for block interaction → `tests/videos/block_interaction.mp4` shows block place/destroy
+
+## Architecture Documentation
+- [x] Add: Create docs/ directory for architecture documentation → `ls docs/` shows the directory exists
+- [ ] Add: Document game state representation in docs/ARCHITECTURE.md → File explains PlayerState struct, position/rotation fields, VoxelWorld, and Chunk structures
+- [ ] Add: Document player location tracking in docs/ARCHITECTURE.md → Section explains how player position (Vec3) is stored, updated via movement/physics, and synchronized over network
+- [ ] Add: Document input handling architecture in docs/ARCHITECTURE.md → Section explains how WASD/SpaceBar inputs are captured and translated to movement/jump actions
+
+## Input Simulation Infrastructure
+- [ ] Add: Create InputSimulator module for integration tests → New module in src/lib.rs or src/input.rs that can simulate WASD+SpaceBar input events
+- [ ] Add: InputSimulator can queue key press/release events → `InputSimulator::press_key(KeyCode::W)` and `release_key()` methods work
+- [ ] Add: InputSimulator integrates with game loop for state updates → Simulated inputs trigger actual movement/physics code paths instead of direct position modification
+
+## Integration Tests with Input Simulation
+- [ ] Add: Integration test proving WASD input simulation works → Test uses InputSimulator to send W key, asserts player.position.z changed (moved forward)
+- [ ] Add: Integration test proving SpaceBar input simulation works → Test uses InputSimulator to send Space key, asserts player.position.y increased (jumped)
+- [ ] Add: Integration test verifying movement state changes from all WASD keys → Test sends W/A/S/D keys sequentially, logs and asserts each position change in game state
+- [ ] Add: Integration test verifying combined movement+jump input → Test sends W+Space simultaneously, asserts player moved forward AND jumped
+
+## Regenerate Test Artifacts
+- [ ] Refactor: Update movement integration tests to use InputSimulator → Tests use input simulation instead of direct position modification, same screenshots generated
+- [ ] Refactor: Update jump integration tests to use InputSimulator → Tests use input simulation instead of direct velocity modification, same screenshots generated
+- [ ] Regenerate: All movement screenshots with verified input simulation → `tests/screenshots/movement_*.png` regenerated using InputSimulator, file timestamps updated
+- [ ] Regenerate: All jump screenshots with verified input simulation → `tests/screenshots/jump_*.png` regenerated using InputSimulator, file timestamps updated
+- [ ] Regenerate: Movement video with verified input simulation → `tests/videos/movement_test.mp4` regenerated using InputSimulator, file timestamp updated
+- [ ] Regenerate: Jump video with verified input simulation → `tests/videos/jump_test.mp4` regenerated using InputSimulator, file timestamp updated
+- [ ] Regenerate: Block interaction video with verified input simulation → `tests/videos/block_interaction.mp4` regenerated using InputSimulator, file timestamp updated
