@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-test-helpers = ["dep:image"]
+test-helpers = []
 
 [dependencies]
 wgpu = "0.19"
@@ -17,6 +17,7 @@ pollster = "0.3"
 env_logger = "0.10"
 log = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
+image = "0.24"
 
 [[bin]]
 name = "client"
@@ -31,9 +32,4 @@ name = "game_engine"
 path = "src/lib.rs"
 
 [dev-dependencies]
-image = "0.24"
-
-# image is also an optional regular dependency for the test-helpers feature
-[dependencies.image]
-version = "0.24"
-optional = true
+# No additional dev dependencies needed - image is now a regular dependency

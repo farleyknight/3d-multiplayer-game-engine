@@ -66,7 +66,7 @@
 - [x] Add: Floor collision detection → Player stops at y=0 (floor level), cannot fall below ground
 
 ## 3D World - Textures & Lighting
-- [ ] Add: Texture loading system for PNG files → Load textures from `textures/default-textures/textures/blocks/` directory
+- [x] Add: Texture loading system for PNG files → Load textures from `textures/default-textures/textures/blocks/` directory
 - [ ] Add: UV mapping for block faces → Each face of a cube can have a texture applied
 - [ ] Add: Textured block rendering → Blocks render with Minecraft textures instead of solid colors
 - [ ] Add: Basic directional lighting → Scene has a sun-like light source casting basic shadows/shading

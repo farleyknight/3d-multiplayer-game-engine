@@ -11,6 +11,214 @@ pub mod test_helpers;
 /// Version of the game engine
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Texture loading and management for block textures
+pub mod texture {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use wgpu::{Device, Queue, Sampler, Texture, TextureDescriptor, TextureFormat, TextureUsages};
+
+    /// Error type for texture loading operations
+    #[derive(Debug)]
+    pub enum TextureError {
+        /// File not found or cannot be read
+        IoError(std::io::Error),
+        /// Image decoding failed
+        ImageError(image::ImageError),
+        /// Texture creation failed
+        WgpuError(String),
+    }
+
+    impl std::fmt::Display for TextureError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                TextureError::IoError(e) => write!(f, "IO error: {}", e),
+                TextureError::ImageError(e) => write!(f, "Image error: {}", e),
+                TextureError::WgpuError(e) => write!(f, "WGPU error: {}", e),
+            }
+        }
+    }
+
+    impl std::error::Error for TextureError {}
+
+    impl From<std::io::Error> for TextureError {
+        fn from(err: std::io::Error) -> Self {
+            TextureError::IoError(err)
+        }
+    }
+
+    impl From<image::ImageError> for TextureError {
+        fn from(err: image::ImageError) -> Self {
+            TextureError::ImageError(err)
+        }
+    }
+
+    /// Load a single PNG texture from disk and create a wgpu Texture.
+    ///
+    /// # Arguments
+    /// * `device` - The wgpu device for creating the texture
+    /// * `queue` - The wgpu queue for uploading texture data
+    /// * `path` - Path to the PNG file
+    ///
+    /// # Returns
+    /// A wgpu Texture ready for use in shaders, or a TextureError if loading fails.
+    pub fn load_png(device: &Device, queue: &Queue, path: &Path) -> Result<Texture, TextureError> {
+        // Read and decode the image file
+        let img = image::open(path)?;
+
+        // Convert to RGBA8 format
+        let rgba = img.to_rgba8();
+        let dimensions = rgba.dimensions();
+        let (width, height) = dimensions;
+
+        // Create the wgpu texture
+        let texture = device.create_texture(&TextureDescriptor {
+            label: Some(path.to_str().unwrap_or("texture")),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        // Upload the pixel data to the texture
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        Ok(texture)
+    }
+
+    /// Load multiple block textures from a directory.
+    ///
+    /// Scans the given directory for PNG files and loads each one into a wgpu Texture.
+    /// The texture name in the HashMap is the filename without extension (e.g., "grass_side").
+    ///
+    /// # Arguments
+    /// * `device` - The wgpu device for creating textures
+    /// * `queue` - The wgpu queue for uploading texture data
+    /// * `base_path` - Path to the directory containing PNG files
+    ///
+    /// # Returns
+    /// A HashMap mapping texture names to wgpu Textures.
+    pub fn load_block_textures(
+        device: &Device,
+        queue: &Queue,
+        base_path: &Path,
+    ) -> Result<HashMap<String, Texture>, TextureError> {
+        let mut textures = HashMap::new();
+
+        // Read the directory
+        let entries = std::fs::read_dir(base_path)?;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process PNG files
+            if path.extension().map_or(false, |ext| ext == "png") {
+                if let Some(stem) = path.file_stem() {
+                    let name = stem.to_string_lossy().to_string();
+                    match load_png(device, queue, &path) {
+                        Ok(texture) => {
+                            textures.insert(name, texture);
+                        }
+                        Err(e) => {
+                            // Log the error but continue loading other textures
+                            log::warn!("Failed to load texture {:?}: {}", path, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(textures)
+    }
+
+    /// Create a nearest-neighbor sampler for pixel art textures.
+    ///
+    /// Uses nearest-neighbor filtering to preserve the blocky appearance of Minecraft-style textures.
+    pub fn create_pixel_art_sampler(device: &Device) -> Sampler {
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Pixel Art Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        })
+    }
+
+    /// Holds loaded textures and a sampler for rendering.
+    pub struct TextureLoader {
+        /// Loaded block textures, keyed by filename without extension
+        pub textures: HashMap<String, Texture>,
+        /// Sampler configured for pixel art (nearest-neighbor filtering)
+        pub sampler: Sampler,
+    }
+
+    impl TextureLoader {
+        /// Create a new TextureLoader by loading all PNG textures from the given directory.
+        ///
+        /// # Arguments
+        /// * `device` - The wgpu device for creating textures and sampler
+        /// * `queue` - The wgpu queue for uploading texture data
+        /// * `textures_path` - Path to the directory containing PNG textures
+        pub fn new(
+            device: &Device,
+            queue: &Queue,
+            textures_path: &Path,
+        ) -> Result<Self, TextureError> {
+            let textures = load_block_textures(device, queue, textures_path)?;
+            let sampler = create_pixel_art_sampler(device);
+            Ok(Self { textures, sampler })
+        }
+
+        /// Get a reference to a texture by name.
+        pub fn get(&self, name: &str) -> Option<&Texture> {
+            self.textures.get(name)
+        }
+
+        /// Get the number of loaded textures.
+        pub fn len(&self) -> usize {
+            self.textures.len()
+        }
+
+        /// Check if no textures are loaded.
+        pub fn is_empty(&self) -> bool {
+            self.textures.is_empty()
+        }
+
+        /// Get an iterator over all texture names.
+        pub fn texture_names(&self) -> impl Iterator<Item = &String> {
+            self.textures.keys()
+        }
+    }
+}
+
 /// Shared types for player state and game data
 pub mod types {
     use super::*;
@@ -2161,5 +2369,229 @@ mod tests {
                 eprintln!("Skipping test_headless_render_state_with_other_players: {}", e);
             }
         }
+    }
+
+    // Texture loading tests
+    #[test]
+    fn test_load_single_png_texture() {
+        use crate::texture::load_png;
+        use std::path::Path;
+
+        // Create wgpu device and queue for testing
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
+
+        let Some(adapter) = adapter else {
+            eprintln!("Skipping test_load_single_png_texture: no GPU adapter available");
+            return;
+        };
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
+        // Load a real texture from the textures directory
+        let texture_path = Path::new("textures/default-textures/textures/blocks/dirt.png");
+        if texture_path.exists() {
+            let result = load_png(&device, &queue, texture_path);
+            assert!(result.is_ok(), "Failed to load texture: {:?}", result.err());
+
+            let texture = result.unwrap();
+            let size = texture.size();
+            // Minecraft textures are typically 16x16
+            assert!(size.width > 0, "Texture width should be positive");
+            assert!(size.height > 0, "Texture height should be positive");
+        } else {
+            eprintln!("Skipping test_load_single_png_texture: texture file not found at {:?}", texture_path);
+        }
+    }
+
+    #[test]
+    fn test_load_png_missing_file() {
+        use crate::texture::load_png;
+        use std::path::Path;
+
+        // Create wgpu device and queue for testing
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
+
+        let Some(adapter) = adapter else {
+            eprintln!("Skipping test_load_png_missing_file: no GPU adapter available");
+            return;
+        };
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
+        // Try to load a non-existent file
+        let result = load_png(&device, &queue, Path::new("nonexistent/texture.png"));
+        assert!(result.is_err(), "Should fail for missing file");
+    }
+
+    #[test]
+    fn test_load_block_textures_from_directory() {
+        use crate::texture::load_block_textures;
+        use std::path::Path;
+
+        // Create wgpu device and queue for testing
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
+
+        let Some(adapter) = adapter else {
+            eprintln!("Skipping test_load_block_textures_from_directory: no GPU adapter available");
+            return;
+        };
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
+        let textures_path = Path::new("textures/default-textures/textures/blocks");
+        if textures_path.exists() {
+            let result = load_block_textures(&device, &queue, textures_path);
+            assert!(result.is_ok(), "Failed to load block textures: {:?}", result.err());
+
+            let textures = result.unwrap();
+            // Should have loaded multiple textures
+            assert!(!textures.is_empty(), "Should have loaded at least one texture");
+
+            // Check that some common textures are loaded
+            if textures.contains_key("dirt") {
+                let dirt_texture = textures.get("dirt").unwrap();
+                let size = dirt_texture.size();
+                assert!(size.width > 0 && size.height > 0);
+            }
+        } else {
+            eprintln!("Skipping test_load_block_textures_from_directory: textures directory not found");
+        }
+    }
+
+    #[test]
+    fn test_texture_loader_creation() {
+        use crate::texture::TextureLoader;
+        use std::path::Path;
+
+        // Create wgpu device and queue for testing
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
+
+        let Some(adapter) = adapter else {
+            eprintln!("Skipping test_texture_loader_creation: no GPU adapter available");
+            return;
+        };
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
+        let textures_path = Path::new("textures/default-textures/textures/blocks");
+        if textures_path.exists() {
+            let result = TextureLoader::new(&device, &queue, textures_path);
+            assert!(result.is_ok(), "Failed to create TextureLoader: {:?}", result.err());
+
+            let loader = result.unwrap();
+            // Should have loaded textures
+            assert!(!loader.is_empty(), "TextureLoader should have loaded textures");
+            assert!(loader.len() > 0, "TextureLoader should have at least one texture");
+
+            // Check texture access
+            for name in loader.texture_names() {
+                assert!(loader.get(name).is_some(), "Should be able to get texture by name");
+            }
+        } else {
+            eprintln!("Skipping test_texture_loader_creation: textures directory not found");
+        }
+    }
+
+    #[test]
+    fn test_pixel_art_sampler_creation() {
+        use crate::texture::create_pixel_art_sampler;
+
+        // Create wgpu device for testing
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
+
+        let Some(adapter) = adapter else {
+            eprintln!("Skipping test_pixel_art_sampler_creation: no GPU adapter available");
+            return;
+        };
+
+        let (device, _queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
+        // Creating the sampler should not panic
+        let _sampler = create_pixel_art_sampler(&device);
     }
 }
