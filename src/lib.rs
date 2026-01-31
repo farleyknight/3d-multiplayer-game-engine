@@ -219,6 +219,99 @@ pub mod texture {
     }
 }
 
+/// Block type definitions and texture mappings
+pub mod blocks {
+    /// Types of blocks that can exist in the game world
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum BlockType {
+        /// Grass block - green top, dirt bottom, grass sides
+        Grass,
+        /// Dirt block - same texture on all sides
+        Dirt,
+        /// Stone block - same texture on all sides
+        Stone,
+        /// Cobblestone block - same texture on all sides
+        Cobblestone,
+        /// Wood (oak planks) block - same texture on all sides
+        Wood,
+    }
+
+    /// Texture names for each face of a block
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct BlockFaceTextures {
+        /// Texture name for the top face (+Y)
+        pub top: &'static str,
+        /// Texture name for the bottom face (-Y)
+        pub bottom: &'static str,
+        /// Texture name for the north face (-Z)
+        pub north: &'static str,
+        /// Texture name for the south face (+Z)
+        pub south: &'static str,
+        /// Texture name for the east face (+X)
+        pub east: &'static str,
+        /// Texture name for the west face (-X)
+        pub west: &'static str,
+    }
+
+    impl BlockFaceTextures {
+        /// Create a BlockFaceTextures where all faces use the same texture
+        pub const fn uniform(texture: &'static str) -> Self {
+            Self {
+                top: texture,
+                bottom: texture,
+                north: texture,
+                south: texture,
+                east: texture,
+                west: texture,
+            }
+        }
+
+        /// Create a BlockFaceTextures with different top, bottom, and side textures
+        pub const fn top_bottom_sides(
+            top: &'static str,
+            bottom: &'static str,
+            sides: &'static str,
+        ) -> Self {
+            Self {
+                top,
+                bottom,
+                north: sides,
+                south: sides,
+                east: sides,
+                west: sides,
+            }
+        }
+    }
+
+    impl BlockType {
+        /// Get the texture names for each face of this block type
+        pub fn textures(&self) -> BlockFaceTextures {
+            match self {
+                BlockType::Grass => BlockFaceTextures::top_bottom_sides(
+                    "grass_top",
+                    "dirt",
+                    "grass_side_carried",
+                ),
+                BlockType::Dirt => BlockFaceTextures::uniform("dirt"),
+                BlockType::Stone => BlockFaceTextures::uniform("stone"),
+                BlockType::Cobblestone => BlockFaceTextures::uniform("cobblestone"),
+                BlockType::Wood => BlockFaceTextures::uniform("planks_oak"),
+            }
+        }
+
+        /// Get all available block types
+        pub fn all() -> &'static [BlockType] {
+            &[
+                BlockType::Grass,
+                BlockType::Dirt,
+                BlockType::Stone,
+                BlockType::Cobblestone,
+                BlockType::Wood,
+            ]
+        }
+    }
+}
+
 /// Shared types for player state and game data
 pub mod types {
     use super::*;
@@ -3246,5 +3339,197 @@ mod tests {
                 start_offset + 24
             );
         }
+    }
+
+    // Block type tests
+    #[test]
+    fn test_block_type_all_variants() {
+        use crate::blocks::BlockType;
+
+        let all = BlockType::all();
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&BlockType::Grass));
+        assert!(all.contains(&BlockType::Dirt));
+        assert!(all.contains(&BlockType::Stone));
+        assert!(all.contains(&BlockType::Cobblestone));
+        assert!(all.contains(&BlockType::Wood));
+    }
+
+    #[test]
+    fn test_block_type_grass_textures() {
+        use crate::blocks::BlockType;
+
+        let textures = BlockType::Grass.textures();
+        assert_eq!(textures.top, "grass_top");
+        assert_eq!(textures.bottom, "dirt");
+        assert_eq!(textures.north, "grass_side_carried");
+        assert_eq!(textures.south, "grass_side_carried");
+        assert_eq!(textures.east, "grass_side_carried");
+        assert_eq!(textures.west, "grass_side_carried");
+    }
+
+    #[test]
+    fn test_block_type_dirt_textures() {
+        use crate::blocks::BlockType;
+
+        let textures = BlockType::Dirt.textures();
+        // Dirt should have uniform texture on all faces
+        assert_eq!(textures.top, "dirt");
+        assert_eq!(textures.bottom, "dirt");
+        assert_eq!(textures.north, "dirt");
+        assert_eq!(textures.south, "dirt");
+        assert_eq!(textures.east, "dirt");
+        assert_eq!(textures.west, "dirt");
+    }
+
+    #[test]
+    fn test_block_type_stone_textures() {
+        use crate::blocks::BlockType;
+
+        let textures = BlockType::Stone.textures();
+        // Stone should have uniform texture on all faces
+        assert_eq!(textures.top, "stone");
+        assert_eq!(textures.bottom, "stone");
+        assert_eq!(textures.north, "stone");
+        assert_eq!(textures.south, "stone");
+        assert_eq!(textures.east, "stone");
+        assert_eq!(textures.west, "stone");
+    }
+
+    #[test]
+    fn test_block_type_cobblestone_textures() {
+        use crate::blocks::BlockType;
+
+        let textures = BlockType::Cobblestone.textures();
+        // Cobblestone should have uniform texture on all faces
+        assert_eq!(textures.top, "cobblestone");
+        assert_eq!(textures.bottom, "cobblestone");
+        assert_eq!(textures.north, "cobblestone");
+        assert_eq!(textures.south, "cobblestone");
+        assert_eq!(textures.east, "cobblestone");
+        assert_eq!(textures.west, "cobblestone");
+    }
+
+    #[test]
+    fn test_block_type_wood_textures() {
+        use crate::blocks::BlockType;
+
+        let textures = BlockType::Wood.textures();
+        // Wood (oak planks) should have uniform texture on all faces
+        assert_eq!(textures.top, "planks_oak");
+        assert_eq!(textures.bottom, "planks_oak");
+        assert_eq!(textures.north, "planks_oak");
+        assert_eq!(textures.south, "planks_oak");
+        assert_eq!(textures.east, "planks_oak");
+        assert_eq!(textures.west, "planks_oak");
+    }
+
+    #[test]
+    fn test_block_face_textures_uniform() {
+        use crate::blocks::BlockFaceTextures;
+
+        let textures = BlockFaceTextures::uniform("test_texture");
+        assert_eq!(textures.top, "test_texture");
+        assert_eq!(textures.bottom, "test_texture");
+        assert_eq!(textures.north, "test_texture");
+        assert_eq!(textures.south, "test_texture");
+        assert_eq!(textures.east, "test_texture");
+        assert_eq!(textures.west, "test_texture");
+    }
+
+    #[test]
+    fn test_block_face_textures_top_bottom_sides() {
+        use crate::blocks::BlockFaceTextures;
+
+        let textures = BlockFaceTextures::top_bottom_sides("top_tex", "bottom_tex", "side_tex");
+        assert_eq!(textures.top, "top_tex");
+        assert_eq!(textures.bottom, "bottom_tex");
+        assert_eq!(textures.north, "side_tex");
+        assert_eq!(textures.south, "side_tex");
+        assert_eq!(textures.east, "side_tex");
+        assert_eq!(textures.west, "side_tex");
+    }
+
+    #[test]
+    fn test_block_type_textures_match_existing_files() {
+        use crate::blocks::BlockType;
+        use std::path::Path;
+
+        let textures_dir = Path::new("textures/default-textures/textures/blocks");
+        if !textures_dir.exists() {
+            eprintln!("Skipping test_block_type_textures_match_existing_files: textures directory not found");
+            return;
+        }
+
+        // Collect all texture names from all block types
+        let mut texture_names = std::collections::HashSet::new();
+        for block_type in BlockType::all() {
+            let textures = block_type.textures();
+            texture_names.insert(textures.top);
+            texture_names.insert(textures.bottom);
+            texture_names.insert(textures.north);
+            texture_names.insert(textures.south);
+            texture_names.insert(textures.east);
+            texture_names.insert(textures.west);
+        }
+
+        // Verify each texture file exists
+        for name in texture_names {
+            let texture_path = textures_dir.join(format!("{}.png", name));
+            assert!(
+                texture_path.exists(),
+                "Texture file not found: {:?}",
+                texture_path
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_type_equality() {
+        use crate::blocks::BlockType;
+
+        assert_eq!(BlockType::Grass, BlockType::Grass);
+        assert_ne!(BlockType::Grass, BlockType::Dirt);
+        assert_ne!(BlockType::Stone, BlockType::Cobblestone);
+    }
+
+    #[test]
+    fn test_block_type_clone() {
+        use crate::blocks::BlockType;
+
+        let original = BlockType::Wood;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_block_type_copy() {
+        use crate::blocks::BlockType;
+
+        let original = BlockType::Stone;
+        let copied: BlockType = original; // Copy, not move
+        assert_eq!(original, copied); // original still accessible
+    }
+
+    #[test]
+    fn test_block_type_debug() {
+        use crate::blocks::BlockType;
+
+        let debug_str = format!("{:?}", BlockType::Grass);
+        assert_eq!(debug_str, "Grass");
+    }
+
+    #[test]
+    fn test_block_type_hash() {
+        use crate::blocks::BlockType;
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        map.insert(BlockType::Grass, "grass_block");
+        map.insert(BlockType::Dirt, "dirt_block");
+
+        assert_eq!(map.get(&BlockType::Grass), Some(&"grass_block"));
+        assert_eq!(map.get(&BlockType::Dirt), Some(&"dirt_block"));
+        assert_eq!(map.get(&BlockType::Stone), None);
     }
 }

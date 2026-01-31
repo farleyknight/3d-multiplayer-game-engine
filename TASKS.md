@@ -73,7 +73,7 @@
 - [x] Add: Ambient lighting → Objects have base illumination even in shadow → Note: Implemented together with directional lighting via ambient_strength uniform (30% ambient)
 
 ## 3D World - Minecraft-like Environment
-- [ ] Add: Block type system → Define block types (grass, dirt, stone, cobblestone, wood) with associated textures
+- [x] Add: Block type system → Define block types (grass, dirt, stone, cobblestone, wood) with associated textures
 - [ ] Add: Voxel world generation → Generate a simple flat world with grass on top, dirt below, stone deeper
 - [ ] Add: Block placement/destruction → Player can place and break blocks (left click destroy, right click place)
 - [ ] Add: Block face culling → Don't render faces between adjacent solid blocks (performance optimization)
