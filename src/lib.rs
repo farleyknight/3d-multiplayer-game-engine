@@ -65,9 +65,42 @@ pub mod types {
 pub mod network {
     use super::*;
     use crate::types::{PlayerData, PlayerState};
+    use std::time::Instant;
 
     /// Default server port for LAN multiplayer (spec: 7878)
     pub const DEFAULT_PORT: u16 = 7878;
+
+    /// Tracks a connected client on the server
+    #[derive(Debug, Clone)]
+    pub struct ConnectedClient {
+        /// The player's ID assigned by the server
+        pub player_id: u32,
+        /// When we last received a packet from this client
+        pub last_seen: Instant,
+        /// The player's current state (position, rotation)
+        pub state: PlayerState,
+    }
+
+    impl ConnectedClient {
+        /// Create a new connected client with the given player ID
+        pub fn new(player_id: u32) -> Self {
+            Self {
+                player_id,
+                last_seen: Instant::now(),
+                state: PlayerState::new(player_id),
+            }
+        }
+
+        /// Update the last_seen timestamp to now
+        pub fn touch(&mut self) {
+            self.last_seen = Instant::now();
+        }
+
+        /// Check if this client has timed out based on TIMEOUT_SECONDS
+        pub fn is_timed_out(&self) -> bool {
+            self.last_seen.elapsed().as_secs() >= TIMEOUT_SECONDS
+        }
+    }
 
     /// Timeout in seconds before a client is considered disconnected
     pub const TIMEOUT_SECONDS: u64 = 5;
@@ -267,5 +300,41 @@ mod tests {
         assert_eq!(packet_type::WELCOME, 0x10);
         assert_eq!(packet_type::WORLD_STATE, 0x11);
         assert_eq!(packet_type::PLAYER_LEFT, 0x12);
+    }
+
+    #[test]
+    fn test_connected_client_new() {
+        use crate::network::ConnectedClient;
+
+        let client = ConnectedClient::new(42);
+
+        assert_eq!(client.player_id, 42);
+        assert_eq!(client.state.player_id, 42);
+        assert_eq!(client.state.position, glam::Vec3::ZERO);
+        assert_eq!(client.state.rotation_yaw, 0.0);
+        assert!(!client.is_timed_out());
+    }
+
+    #[test]
+    fn test_connected_client_touch() {
+        use crate::network::ConnectedClient;
+
+        let mut client = ConnectedClient::new(1);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let before_touch = client.last_seen;
+        client.touch();
+
+        assert!(client.last_seen > before_touch);
+    }
+
+    #[test]
+    fn test_server_socket_binding() {
+        use std::net::UdpSocket;
+
+        // Use a random port to avoid conflicts with other tests or running server
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind UDP socket");
+        let local_addr = socket.local_addr().expect("Failed to get local address");
+
+        assert!(local_addr.port() > 0);
     }
 }

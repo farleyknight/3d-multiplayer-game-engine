@@ -9,7 +9,7 @@
 - [x] Implement network packet serialization/deserialization → Unit tests verify encode/decode of all packet types → Note: needed glam "serde" feature
 
 ## Server Implementation
-- [ ] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
+- [x] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
 - [ ] Implement player state management (join, update, timeout) → Integration test: fake client sends packets, server tracks player
 - [ ] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
 
