@@ -385,18 +385,131 @@ pub mod voxel {
     pub const WORLD_MIN_Y: i32 = -4;
     pub const WORLD_MAX_Y: i32 = 0;
 
-    /// A voxel world containing block data
+    /// Chunk size in blocks (16x16x16)
+    pub const CHUNK_SIZE: usize = 16;
+    pub const CHUNK_SIZE_I32: i32 = CHUNK_SIZE as i32;
+
+    /// A 16x16x16 chunk of blocks
+    #[derive(Debug, Clone)]
+    pub struct Chunk {
+        /// Block data stored as a 3D array [x][y][z]
+        /// Each element is an Option<BlockType> - None means air/empty
+        blocks: [[[Option<BlockType>; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+    }
+
+    impl Chunk {
+        /// Create an empty chunk (all air)
+        pub fn new() -> Self {
+            Self {
+                blocks: [[[None; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+            }
+        }
+
+        /// Get the block at the given local position (0-15 for each axis)
+        /// Returns None if position is out of bounds or block is air
+        pub fn get_block(&self, x: usize, y: usize, z: usize) -> Option<BlockType> {
+            if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                self.blocks[x][y][z]
+            } else {
+                None
+            }
+        }
+
+        /// Set a block at the given local position (0-15 for each axis)
+        /// Returns false if position is out of bounds
+        pub fn set_block(&mut self, x: usize, y: usize, z: usize, block_type: BlockType) -> bool {
+            if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                self.blocks[x][y][z] = Some(block_type);
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Remove a block at the given local position (0-15 for each axis)
+        /// Returns the removed block type if one existed
+        pub fn remove_block(&mut self, x: usize, y: usize, z: usize) -> Option<BlockType> {
+            if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                self.blocks[x][y][z].take()
+            } else {
+                None
+            }
+        }
+
+        /// Check if a position is within the chunk bounds
+        pub fn is_in_bounds(x: usize, y: usize, z: usize) -> bool {
+            x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE
+        }
+
+        /// Count the number of non-air blocks in this chunk
+        pub fn block_count(&self) -> usize {
+            let mut count = 0;
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE {
+                    for z in 0..CHUNK_SIZE {
+                        if self.blocks[x][y][z].is_some() {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            count
+        }
+
+        /// Iterate over all blocks in this chunk with their local positions
+        pub fn iter_blocks(&self) -> impl Iterator<Item = ((usize, usize, usize), BlockType)> + '_ {
+            (0..CHUNK_SIZE).flat_map(move |x| {
+                (0..CHUNK_SIZE).flat_map(move |y| {
+                    (0..CHUNK_SIZE).filter_map(move |z| {
+                        self.blocks[x][y][z].map(|block_type| ((x, y, z), block_type))
+                    })
+                })
+            })
+        }
+    }
+
+    impl Default for Chunk {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// Convert world coordinates to chunk coordinates and local block coordinates within the chunk
+    /// Returns ((chunk_x, chunk_y, chunk_z), (local_x, local_y, local_z))
+    pub fn world_to_chunk_coords(x: i32, y: i32, z: i32) -> ((i32, i32, i32), (usize, usize, usize)) {
+        // Use floor division for proper negative coordinate handling
+        let chunk_x = x.div_euclid(CHUNK_SIZE_I32);
+        let chunk_y = y.div_euclid(CHUNK_SIZE_I32);
+        let chunk_z = z.div_euclid(CHUNK_SIZE_I32);
+
+        // Use modulo with positive result for local coordinates
+        let local_x = x.rem_euclid(CHUNK_SIZE_I32) as usize;
+        let local_y = y.rem_euclid(CHUNK_SIZE_I32) as usize;
+        let local_z = z.rem_euclid(CHUNK_SIZE_I32) as usize;
+
+        ((chunk_x, chunk_y, chunk_z), (local_x, local_y, local_z))
+    }
+
+    /// Convert chunk coordinates and local coordinates back to world coordinates
+    pub fn chunk_to_world_coords(chunk_pos: (i32, i32, i32), local_pos: (usize, usize, usize)) -> (i32, i32, i32) {
+        let world_x = chunk_pos.0 * CHUNK_SIZE_I32 + local_pos.0 as i32;
+        let world_y = chunk_pos.1 * CHUNK_SIZE_I32 + local_pos.1 as i32;
+        let world_z = chunk_pos.2 * CHUNK_SIZE_I32 + local_pos.2 as i32;
+        (world_x, world_y, world_z)
+    }
+
+    /// A voxel world containing block data organized in chunks
     #[derive(Debug, Clone)]
     pub struct VoxelWorld {
-        /// Block data stored by position (x, y, z)
-        pub blocks: HashMap<(i32, i32, i32), BlockType>,
+        /// Chunk data stored by chunk position (chunk_x, chunk_y, chunk_z)
+        pub chunks: HashMap<(i32, i32, i32), Chunk>,
     }
 
     impl VoxelWorld {
         /// Create an empty voxel world
         pub fn new() -> Self {
             Self {
-                blocks: HashMap::new(),
+                chunks: HashMap::new(),
             }
         }
 
@@ -420,7 +533,7 @@ pub mod voxel {
                             -1 | -2 => BlockType::Dirt,
                             _ => BlockType::Stone, // y <= -3
                         };
-                        world.blocks.insert((x, y, z), block_type);
+                        world.set_block(x, y, z, block_type);
                     }
                 }
             }
@@ -428,24 +541,37 @@ pub mod voxel {
             world
         }
 
-        /// Get the block at the given position, if any
-        pub fn get_block(&self, x: i32, y: i32, z: i32) -> Option<&BlockType> {
-            self.blocks.get(&(x, y, z))
+        /// Get the block at the given world position, if any
+        pub fn get_block(&self, x: i32, y: i32, z: i32) -> Option<BlockType> {
+            let (chunk_pos, local_pos) = world_to_chunk_coords(x, y, z);
+            self.chunks
+                .get(&chunk_pos)
+                .and_then(|chunk| chunk.get_block(local_pos.0, local_pos.1, local_pos.2))
         }
 
-        /// Set a block at the given position
+        /// Set a block at the given world position
         pub fn set_block(&mut self, x: i32, y: i32, z: i32, block_type: BlockType) {
-            self.blocks.insert((x, y, z), block_type);
+            let (chunk_pos, local_pos) = world_to_chunk_coords(x, y, z);
+            let chunk = self.chunks.entry(chunk_pos).or_insert_with(Chunk::new);
+            chunk.set_block(local_pos.0, local_pos.1, local_pos.2, block_type);
         }
 
-        /// Remove a block at the given position, returning the removed block type if any
+        /// Remove a block at the given world position, returning the removed block type if any
         pub fn remove_block(&mut self, x: i32, y: i32, z: i32) -> Option<BlockType> {
-            self.blocks.remove(&(x, y, z))
+            let (chunk_pos, local_pos) = world_to_chunk_coords(x, y, z);
+            self.chunks
+                .get_mut(&chunk_pos)
+                .and_then(|chunk| chunk.remove_block(local_pos.0, local_pos.1, local_pos.2))
         }
 
         /// Get the number of blocks in the world
         pub fn block_count(&self) -> usize {
-            self.blocks.len()
+            self.chunks.values().map(|chunk| chunk.block_count()).sum()
+        }
+
+        /// Get the number of chunks in the world
+        pub fn chunk_count(&self) -> usize {
+            self.chunks.len()
         }
 
         /// Build a mesh of all blocks in the world with face culling optimization.
@@ -458,26 +584,33 @@ pub mod voxel {
             let mut indices = Vec::new();
             let mut vertex_count = 0u16;
 
-            for ((x, y, z), _block_type) in &self.blocks {
-                // Convert block coordinates to world position (each block is 1x1x1)
-                let offset = (*x as f32, *y as f32, *z as f32);
+            // Iterate over all chunks
+            for (chunk_pos, chunk) in &self.chunks {
+                // Iterate over all blocks in this chunk
+                for (local_pos, _block_type) in chunk.iter_blocks() {
+                    // Convert to world coordinates
+                    let (x, y, z) = chunk_to_world_coords(*chunk_pos, local_pos);
+                    let offset = (x as f32, y as f32, z as f32);
 
-                // Check each face - only render if no adjacent block exists
-                for face in BlockFace::all() {
-                    let (dx, dy, dz) = face.neighbor_offset();
-                    let neighbor_pos = (*x + dx, *y + dy, *z + dz);
+                    // Check each face - only render if no adjacent block exists
+                    for face in BlockFace::all() {
+                        let (dx, dy, dz) = face.neighbor_offset();
+                        let neighbor_x = x + dx;
+                        let neighbor_y = y + dy;
+                        let neighbor_z = z + dz;
 
-                    // Only render this face if there's no solid neighbor
-                    if self.blocks.get(&neighbor_pos).is_none() {
-                        // Add 4 vertices for this face
-                        let face_verts = create_textured_face_vertices(face, offset, [1.0, 1.0, 1.0]);
-                        vertices.extend_from_slice(&face_verts);
+                        // Only render this face if there's no solid neighbor
+                        if self.get_block(neighbor_x, neighbor_y, neighbor_z).is_none() {
+                            // Add 4 vertices for this face
+                            let face_verts = create_textured_face_vertices(face, offset, [1.0, 1.0, 1.0]);
+                            vertices.extend_from_slice(&face_verts);
 
-                        // Add 6 indices for this face
-                        let face_indices = create_face_indices(vertex_count);
-                        indices.extend_from_slice(&face_indices);
+                            // Add 6 indices for this face
+                            let face_indices = create_face_indices(vertex_count);
+                            indices.extend_from_slice(&face_indices);
 
-                        vertex_count += 4;
+                            vertex_count += 4;
+                        }
                     }
                 }
             }
@@ -4226,7 +4359,7 @@ mod tests {
         let mut world = VoxelWorld::new();
         world.set_block(0, 0, 0, BlockType::Grass);
 
-        assert_eq!(world.get_block(0, 0, 0), Some(&BlockType::Grass));
+        assert_eq!(world.get_block(0, 0, 0), Some(BlockType::Grass));
         assert_eq!(world.get_block(1, 0, 0), None);
     }
 
@@ -4254,7 +4387,7 @@ mod tests {
             for z in -8..8 {
                 assert_eq!(
                     world.get_block(x, 0, z),
-                    Some(&BlockType::Grass),
+                    Some(BlockType::Grass),
                     "Block at ({}, 0, {}) should be Grass",
                     x, z
                 );
@@ -4274,13 +4407,13 @@ mod tests {
             for z in -8..8 {
                 assert_eq!(
                     world.get_block(x, -1, z),
-                    Some(&BlockType::Dirt),
+                    Some(BlockType::Dirt),
                     "Block at ({}, -1, {}) should be Dirt",
                     x, z
                 );
                 assert_eq!(
                     world.get_block(x, -2, z),
-                    Some(&BlockType::Dirt),
+                    Some(BlockType::Dirt),
                     "Block at ({}, -2, {}) should be Dirt",
                     x, z
                 );
@@ -4300,13 +4433,13 @@ mod tests {
             for z in -8..8 {
                 assert_eq!(
                     world.get_block(x, -3, z),
-                    Some(&BlockType::Stone),
+                    Some(BlockType::Stone),
                     "Block at ({}, -3, {}) should be Stone",
                     x, z
                 );
                 assert_eq!(
                     world.get_block(x, -4, z),
-                    Some(&BlockType::Stone),
+                    Some(BlockType::Stone),
                     "Block at ({}, -4, {}) should be Stone",
                     x, z
                 );
@@ -4450,5 +4583,232 @@ mod tests {
         assert_eq!(WORLD_SIZE_Z, 16);
         assert_eq!(WORLD_MIN_Y, -4);
         assert_eq!(WORLD_MAX_Y, 0);
+    }
+
+    // Chunk tests
+    #[test]
+    fn test_chunk_new_empty() {
+        use crate::voxel::Chunk;
+
+        let chunk = Chunk::new();
+        assert_eq!(chunk.block_count(), 0);
+    }
+
+    #[test]
+    fn test_chunk_set_and_get_block() {
+        use crate::blocks::BlockType;
+        use crate::voxel::Chunk;
+
+        let mut chunk = Chunk::new();
+        assert!(chunk.set_block(0, 0, 0, BlockType::Grass));
+        assert_eq!(chunk.get_block(0, 0, 0), Some(BlockType::Grass));
+        assert_eq!(chunk.get_block(1, 0, 0), None);
+    }
+
+    #[test]
+    fn test_chunk_set_block_out_of_bounds() {
+        use crate::blocks::BlockType;
+        use crate::voxel::{Chunk, CHUNK_SIZE};
+
+        let mut chunk = Chunk::new();
+        assert!(!chunk.set_block(CHUNK_SIZE, 0, 0, BlockType::Grass));
+        assert!(!chunk.set_block(0, CHUNK_SIZE, 0, BlockType::Grass));
+        assert!(!chunk.set_block(0, 0, CHUNK_SIZE, BlockType::Grass));
+    }
+
+    #[test]
+    fn test_chunk_remove_block() {
+        use crate::blocks::BlockType;
+        use crate::voxel::Chunk;
+
+        let mut chunk = Chunk::new();
+        chunk.set_block(5, 5, 5, BlockType::Stone);
+        assert_eq!(chunk.remove_block(5, 5, 5), Some(BlockType::Stone));
+        assert_eq!(chunk.get_block(5, 5, 5), None);
+        assert_eq!(chunk.remove_block(5, 5, 5), None);
+    }
+
+    #[test]
+    fn test_chunk_block_count() {
+        use crate::blocks::BlockType;
+        use crate::voxel::Chunk;
+
+        let mut chunk = Chunk::new();
+        assert_eq!(chunk.block_count(), 0);
+
+        chunk.set_block(0, 0, 0, BlockType::Grass);
+        assert_eq!(chunk.block_count(), 1);
+
+        chunk.set_block(1, 1, 1, BlockType::Dirt);
+        assert_eq!(chunk.block_count(), 2);
+
+        chunk.remove_block(0, 0, 0);
+        assert_eq!(chunk.block_count(), 1);
+    }
+
+    #[test]
+    fn test_chunk_iter_blocks() {
+        use crate::blocks::BlockType;
+        use crate::voxel::Chunk;
+
+        let mut chunk = Chunk::new();
+        chunk.set_block(1, 2, 3, BlockType::Grass);
+        chunk.set_block(4, 5, 6, BlockType::Stone);
+
+        let blocks: Vec<_> = chunk.iter_blocks().collect();
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.contains(&((1, 2, 3), BlockType::Grass)));
+        assert!(blocks.contains(&((4, 5, 6), BlockType::Stone)));
+    }
+
+    #[test]
+    fn test_chunk_is_in_bounds() {
+        use crate::voxel::{Chunk, CHUNK_SIZE};
+
+        assert!(Chunk::is_in_bounds(0, 0, 0));
+        assert!(Chunk::is_in_bounds(CHUNK_SIZE - 1, CHUNK_SIZE - 1, CHUNK_SIZE - 1));
+        assert!(!Chunk::is_in_bounds(CHUNK_SIZE, 0, 0));
+        assert!(!Chunk::is_in_bounds(0, CHUNK_SIZE, 0));
+        assert!(!Chunk::is_in_bounds(0, 0, CHUNK_SIZE));
+    }
+
+    #[test]
+    fn test_chunk_default() {
+        use crate::voxel::Chunk;
+
+        let chunk = Chunk::default();
+        assert_eq!(chunk.block_count(), 0);
+    }
+
+    #[test]
+    fn test_chunk_size_constant() {
+        use crate::voxel::CHUNK_SIZE;
+
+        assert_eq!(CHUNK_SIZE, 16);
+    }
+
+    // Chunk coordinate conversion tests
+    #[test]
+    fn test_world_to_chunk_coords_positive() {
+        use crate::voxel::world_to_chunk_coords;
+
+        // Block at (0, 0, 0) is in chunk (0, 0, 0) at local (0, 0, 0)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(0, 0, 0);
+        assert_eq!(chunk_pos, (0, 0, 0));
+        assert_eq!(local_pos, (0, 0, 0));
+
+        // Block at (15, 15, 15) is in chunk (0, 0, 0) at local (15, 15, 15)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(15, 15, 15);
+        assert_eq!(chunk_pos, (0, 0, 0));
+        assert_eq!(local_pos, (15, 15, 15));
+
+        // Block at (16, 16, 16) is in chunk (1, 1, 1) at local (0, 0, 0)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(16, 16, 16);
+        assert_eq!(chunk_pos, (1, 1, 1));
+        assert_eq!(local_pos, (0, 0, 0));
+    }
+
+    #[test]
+    fn test_world_to_chunk_coords_negative() {
+        use crate::voxel::world_to_chunk_coords;
+
+        // Block at (-1, -1, -1) is in chunk (-1, -1, -1) at local (15, 15, 15)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(-1, -1, -1);
+        assert_eq!(chunk_pos, (-1, -1, -1));
+        assert_eq!(local_pos, (15, 15, 15));
+
+        // Block at (-16, -16, -16) is in chunk (-1, -1, -1) at local (0, 0, 0)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(-16, -16, -16);
+        assert_eq!(chunk_pos, (-1, -1, -1));
+        assert_eq!(local_pos, (0, 0, 0));
+
+        // Block at (-17, -17, -17) is in chunk (-2, -2, -2) at local (15, 15, 15)
+        let (chunk_pos, local_pos) = world_to_chunk_coords(-17, -17, -17);
+        assert_eq!(chunk_pos, (-2, -2, -2));
+        assert_eq!(local_pos, (15, 15, 15));
+    }
+
+    #[test]
+    fn test_chunk_to_world_coords() {
+        use crate::voxel::chunk_to_world_coords;
+
+        // Chunk (0, 0, 0), local (0, 0, 0) -> world (0, 0, 0)
+        assert_eq!(chunk_to_world_coords((0, 0, 0), (0, 0, 0)), (0, 0, 0));
+
+        // Chunk (0, 0, 0), local (15, 15, 15) -> world (15, 15, 15)
+        assert_eq!(chunk_to_world_coords((0, 0, 0), (15, 15, 15)), (15, 15, 15));
+
+        // Chunk (1, 1, 1), local (0, 0, 0) -> world (16, 16, 16)
+        assert_eq!(chunk_to_world_coords((1, 1, 1), (0, 0, 0)), (16, 16, 16));
+
+        // Chunk (-1, -1, -1), local (15, 15, 15) -> world (-1, -1, -1)
+        assert_eq!(chunk_to_world_coords((-1, -1, -1), (15, 15, 15)), (-1, -1, -1));
+    }
+
+    #[test]
+    fn test_world_to_chunk_coords_roundtrip() {
+        use crate::voxel::{world_to_chunk_coords, chunk_to_world_coords};
+
+        // Test that converting to chunk coords and back gives original coords
+        for x in -32..32 {
+            for y in -16..16 {
+                for z in -32..32 {
+                    let (chunk_pos, local_pos) = world_to_chunk_coords(x, y, z);
+                    let (world_x, world_y, world_z) = chunk_to_world_coords(chunk_pos, local_pos);
+                    assert_eq!((x, y, z), (world_x, world_y, world_z),
+                        "Roundtrip failed for ({}, {}, {})", x, y, z);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_voxel_world_chunk_count() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+        // World spans x: -8 to 7, z: -8 to 7, y: -4 to 0
+        // Chunks: x spans chunk -1 to 0, z spans chunk -1 to 0, y spans chunk -1 to 0
+        // So we should have 2 * 2 * 1 = 4 chunks (or more depending on y span)
+        assert!(world.chunk_count() > 0);
+        assert!(world.chunk_count() <= 8); // At most 2x2x2 chunks for this small world
+    }
+
+    #[test]
+    fn test_voxel_world_set_block_creates_chunk() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let mut world = VoxelWorld::new();
+        assert_eq!(world.chunk_count(), 0);
+
+        world.set_block(0, 0, 0, BlockType::Grass);
+        assert_eq!(world.chunk_count(), 1);
+
+        // Setting block in same chunk doesn't create new chunk
+        world.set_block(1, 1, 1, BlockType::Dirt);
+        assert_eq!(world.chunk_count(), 1);
+
+        // Setting block in different chunk creates new chunk
+        world.set_block(16, 0, 0, BlockType::Stone);
+        assert_eq!(world.chunk_count(), 2);
+    }
+
+    #[test]
+    fn test_voxel_world_get_block_across_chunks() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let mut world = VoxelWorld::new();
+
+        // Set blocks in different chunks
+        world.set_block(-1, -1, -1, BlockType::Grass);
+        world.set_block(0, 0, 0, BlockType::Dirt);
+        world.set_block(16, 16, 16, BlockType::Stone);
+
+        assert_eq!(world.get_block(-1, -1, -1), Some(BlockType::Grass));
+        assert_eq!(world.get_block(0, 0, 0), Some(BlockType::Dirt));
+        assert_eq!(world.get_block(16, 16, 16), Some(BlockType::Stone));
+        assert_eq!(world.get_block(100, 100, 100), None);
     }
 }
