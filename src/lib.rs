@@ -448,26 +448,38 @@ pub mod voxel {
             self.blocks.len()
         }
 
-        /// Build a mesh of all blocks in the world.
+        /// Build a mesh of all blocks in the world with face culling optimization.
+        /// Only renders faces that are not adjacent to another solid block.
         /// Returns (vertices, indices) for rendering with the textured pipeline.
         pub fn build_mesh(&self) -> (Vec<TexturedVertex>, Vec<u16>) {
-            let mut vertices = Vec::with_capacity(self.blocks.len() * 24);
-            let mut indices = Vec::with_capacity(self.blocks.len() * 36);
+            use crate::render::{BlockFace, create_textured_face_vertices, create_face_indices};
 
-            let mut block_index = 0u16;
+            let mut vertices = Vec::new();
+            let mut indices = Vec::new();
+            let mut vertex_count = 0u16;
+
             for ((x, y, z), _block_type) in &self.blocks {
                 // Convert block coordinates to world position (each block is 1x1x1)
                 let offset = (*x as f32, *y as f32, *z as f32);
-                let size = (1.0, 1.0, 1.0);
 
-                // Use white color so texture shows through
-                let cube_verts = crate::render::create_textured_cube_vertices(size, offset, [1.0, 1.0, 1.0]);
-                vertices.extend_from_slice(&cube_verts);
+                // Check each face - only render if no adjacent block exists
+                for face in BlockFace::all() {
+                    let (dx, dy, dz) = face.neighbor_offset();
+                    let neighbor_pos = (*x + dx, *y + dy, *z + dz);
 
-                let cube_indices = crate::render::create_textured_cube_indices(block_index * 24);
-                indices.extend_from_slice(&cube_indices);
+                    // Only render this face if there's no solid neighbor
+                    if self.blocks.get(&neighbor_pos).is_none() {
+                        // Add 4 vertices for this face
+                        let face_verts = create_textured_face_vertices(face, offset, [1.0, 1.0, 1.0]);
+                        vertices.extend_from_slice(&face_verts);
 
-                block_index += 1;
+                        // Add 6 indices for this face
+                        let face_indices = create_face_indices(vertex_count);
+                        indices.extend_from_slice(&face_indices);
+
+                        vertex_count += 4;
+                    }
+                }
             }
 
             (vertices, indices)
@@ -945,6 +957,115 @@ pub mod render {
                 ],
             }
         }
+    }
+
+    /// Face direction for block face culling
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum BlockFace {
+        /// +X direction (right)
+        PosX,
+        /// -X direction (left)
+        NegX,
+        /// +Y direction (top)
+        PosY,
+        /// -Y direction (bottom)
+        NegY,
+        /// +Z direction (front)
+        PosZ,
+        /// -Z direction (back)
+        NegZ,
+    }
+
+    impl BlockFace {
+        /// Returns the neighbor offset for this face direction
+        pub fn neighbor_offset(&self) -> (i32, i32, i32) {
+            match self {
+                BlockFace::PosX => (1, 0, 0),
+                BlockFace::NegX => (-1, 0, 0),
+                BlockFace::PosY => (0, 1, 0),
+                BlockFace::NegY => (0, -1, 0),
+                BlockFace::PosZ => (0, 0, 1),
+                BlockFace::NegZ => (0, 0, -1),
+            }
+        }
+
+        /// Returns all 6 face directions
+        pub fn all() -> [BlockFace; 6] {
+            [
+                BlockFace::PosX,
+                BlockFace::NegX,
+                BlockFace::PosY,
+                BlockFace::NegY,
+                BlockFace::PosZ,
+                BlockFace::NegZ,
+            ]
+        }
+    }
+
+    /// Create 4 vertices for a single face of a textured cube.
+    /// Used for face culling optimization - only creates vertices for visible faces.
+    pub fn create_textured_face_vertices(
+        face: BlockFace,
+        offset: (f32, f32, f32),
+        color: [f32; 3],
+    ) -> [TexturedVertex; 4] {
+        let (ox, oy, oz) = offset;
+        // Block size is 1.0, half-size is 0.5
+        let w = 0.5;
+        let h = 0.5;
+        let d = 0.5;
+
+        match face {
+            BlockFace::PosZ => [
+                // Front face (+Z)
+                TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 1.0], color, normal: [0.0, 0.0, 1.0] },
+                TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 1.0], color, normal: [0.0, 0.0, 1.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 0.0], color, normal: [0.0, 0.0, 1.0] },
+                TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 0.0], color, normal: [0.0, 0.0, 1.0] },
+            ],
+            BlockFace::NegZ => [
+                // Back face (-Z)
+                TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [0.0, 0.0, -1.0] },
+                TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [0.0, 0.0, -1.0] },
+                TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [0.0, 0.0, -1.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [0.0, 0.0, -1.0] },
+            ],
+            BlockFace::PosX => [
+                // Right face (+X)
+                TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [0.0, 1.0], color, normal: [1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [0.0, 0.0], color, normal: [1.0, 0.0, 0.0] },
+            ],
+            BlockFace::NegX => [
+                // Left face (-X)
+                TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [-1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [1.0, 1.0], color, normal: [-1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [1.0, 0.0], color, normal: [-1.0, 0.0, 0.0] },
+                TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [-1.0, 0.0, 0.0] },
+            ],
+            BlockFace::PosY => [
+                // Top face (+Y)
+                TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 1.0], color, normal: [0.0, 1.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 1.0], color, normal: [0.0, 1.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [0.0, 1.0, 0.0] },
+                TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [0.0, 1.0, 0.0] },
+            ],
+            BlockFace::NegY => [
+                // Bottom face (-Y)
+                TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [0.0, -1.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [0.0, -1.0, 0.0] },
+                TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 0.0], color, normal: [0.0, -1.0, 0.0] },
+                TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 0.0], color, normal: [0.0, -1.0, 0.0] },
+            ],
+        }
+    }
+
+    /// Generate indices for a single face (4-vertex layout).
+    /// Pattern: v0, v1, v2, v2, v3, v0 for each quad face.
+    /// Returns 6 indices (2 triangles × 3 vertices).
+    pub const fn create_face_indices(start: u16) -> [u16; 6] {
+        [start, start + 1, start + 2, start + 2, start + 3, start]
     }
 
     /// Cube vertices with positions, colors, and normals (24 vertices, 4 per face)
@@ -4194,27 +4315,105 @@ mod tests {
     }
 
     #[test]
-    fn test_voxel_build_mesh_vertex_count() {
+    fn test_voxel_build_mesh_with_face_culling() {
         use crate::voxel::VoxelWorld;
 
         let world = VoxelWorld::generate_flat_world();
-        let (vertices, _) = world.build_mesh();
+        let (vertices, indices) = world.build_mesh();
 
-        // Each block has 24 vertices (4 per face * 6 faces)
-        let expected_vertices = world.block_count() * 24;
-        assert_eq!(vertices.len(), expected_vertices);
+        // With face culling, we should have fewer faces than 6 per block
+        // because interior faces are culled.
+        // Each visible face has 4 vertices and 6 indices
+        let max_vertices = world.block_count() * 24; // Without culling
+        let max_indices = world.block_count() * 36;
+
+        // Face culling should reduce vertex/index count significantly
+        assert!(
+            vertices.len() < max_vertices,
+            "Face culling should reduce vertex count: {} >= {} (no reduction)",
+            vertices.len(),
+            max_vertices
+        );
+        assert!(
+            indices.len() < max_indices,
+            "Face culling should reduce index count: {} >= {} (no reduction)",
+            indices.len(),
+            max_indices
+        );
+
+        // Verify consistent vertex/index ratio: 4 vertices per 6 indices (i.e., 2:3)
+        // Each face has 4 vertices and 6 indices
+        assert_eq!(
+            vertices.len() * 6,
+            indices.len() * 4,
+            "Vertex to index ratio should be 4:6 (2:3)"
+        );
     }
 
     #[test]
-    fn test_voxel_build_mesh_index_count() {
+    fn test_voxel_build_mesh_single_block_all_faces() {
+        use crate::blocks::BlockType;
         use crate::voxel::VoxelWorld;
 
-        let world = VoxelWorld::generate_flat_world();
-        let (_, indices) = world.build_mesh();
+        // A single isolated block should have all 6 faces rendered
+        let mut world = VoxelWorld::new();
+        world.set_block(0, 0, 0, BlockType::Grass);
 
-        // Each block has 36 indices (6 faces * 2 triangles * 3 vertices)
-        let expected_indices = world.block_count() * 36;
-        assert_eq!(indices.len(), expected_indices);
+        let (vertices, indices) = world.build_mesh();
+
+        // 6 faces * 4 vertices = 24 vertices
+        assert_eq!(vertices.len(), 24, "Single block should have 24 vertices");
+        // 6 faces * 6 indices = 36 indices
+        assert_eq!(indices.len(), 36, "Single block should have 36 indices");
+    }
+
+    #[test]
+    fn test_voxel_build_mesh_interior_block_no_faces() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        // Create a 3x3x3 cube - the center block should have no visible faces
+        let mut world = VoxelWorld::new();
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    world.set_block(x, y, z, BlockType::Stone);
+                }
+            }
+        }
+
+        let (vertices, _) = world.build_mesh();
+
+        // 27 blocks total, but the center block (0,0,0) has all neighbors
+        // So it contributes 0 faces.
+        // The 26 outer blocks each have some exposed faces.
+        // Total faces for a 3x3x3 solid cube = 6 faces * 9 blocks per face = 54 faces
+        // 54 faces * 4 vertices = 216 vertices
+        assert_eq!(
+            vertices.len(),
+            216,
+            "3x3x3 cube should have 216 vertices (54 faces * 4)"
+        );
+    }
+
+    #[test]
+    fn test_voxel_build_mesh_two_adjacent_blocks() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        // Two blocks adjacent along X axis
+        let mut world = VoxelWorld::new();
+        world.set_block(0, 0, 0, BlockType::Grass);
+        world.set_block(1, 0, 0, BlockType::Grass);
+
+        let (vertices, indices) = world.build_mesh();
+
+        // Each block has 6 faces, but they share one face (culled on both sides)
+        // So total visible faces = 6 + 6 - 2 = 10 faces
+        // 10 faces * 4 vertices = 40 vertices
+        assert_eq!(vertices.len(), 40, "Two adjacent blocks should have 40 vertices");
+        // 10 faces * 6 indices = 60 indices
+        assert_eq!(indices.len(), 60, "Two adjacent blocks should have 60 indices");
     }
 
     #[test]
