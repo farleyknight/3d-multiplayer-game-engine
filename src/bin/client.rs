@@ -261,9 +261,19 @@ fn main() {
                                                 ServerPacket::WorldState { players } => {
                                                     // Update other_players map with received world state
                                                     // Only include players that aren't the local player
+                                                    // Track which players we knew about before
+                                                    let known_ids: std::collections::HashSet<u32> =
+                                                        other_players.keys().copied().collect();
                                                     other_players.clear();
                                                     for p in players {
                                                         if p.player_id != player.player_id {
+                                                            // Log when a new player joins
+                                                            if !known_ids.contains(&p.player_id) {
+                                                                log::info!(
+                                                                    "Player {} joined the game",
+                                                                    p.player_id
+                                                                );
+                                                            }
                                                             log::debug!(
                                                                 "Other player {}: pos=({:.2}, {:.2}, {:.2}), yaw={:.2}",
                                                                 p.player_id,

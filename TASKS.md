@@ -36,7 +36,7 @@
 - [x] Render other players from received world state → Second client's character visible and moves correctly
 
 ## Integration
-- [ ] Handle player join/leave (character appears/disappears) → Start/stop second client, character appears/disappears on first
+- [x] Handle player join/leave (character appears/disappears) → Start/stop second client, character appears/disappears on first
 - [ ] End-to-end test: two clients see each other move → Two clients on same machine can see each other's movement
 
 ## Cross-Platform & CI
