@@ -10,7 +10,7 @@
 
 ## Server Implementation
 - [x] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
-- [ ] Implement player state management (join, update, timeout) → Integration test: fake client sends packets, server tracks player
+- [x] Implement player state management (join, update, timeout) → Integration test: fake client sends packets, server tracks player
 - [ ] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
 
 ## Client Rendering Foundation
