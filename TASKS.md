@@ -20,7 +20,7 @@
 
 ## Client Scene
 - [x] Render ground plane at y=0 → Gray 50×50 quad visible in scene
-- [ ] Render humanoid character from basic shapes → Multi-part character (head, torso, arms, legs) visible
+- [x] Render humanoid character from basic shapes → Multi-part character (head, torso, arms, legs) visible
 - [ ] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
 
 ## Client Input & Movement

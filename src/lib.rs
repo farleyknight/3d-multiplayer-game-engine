@@ -326,6 +326,95 @@ pub mod render {
         2, 3, 0, // second triangle
     ];
 
+    // Humanoid character body part dimensions (per RENDERING.md spec)
+    // Head: 0.4×0.4×0.4 at y=1.6
+    // Torso: 0.6×0.8×0.3 at y=1.0
+    // Arms: 0.2×0.6×0.2 at ±0.4 from center, y=1.0
+    // Legs: 0.2×0.8×0.2 at ±0.15 from center, y=0.4
+
+    /// Local player color: Blue (#4444FF)
+    const PLAYER_BLUE: [f32; 3] = [0.267, 0.267, 1.0];
+
+    /// Generate cube vertices at a given offset with a given size and color
+    /// Size is (width, height, depth) and offset is the center position
+    fn create_cube_vertices(
+        size: (f32, f32, f32),
+        offset: (f32, f32, f32),
+        color: [f32; 3],
+    ) -> [Vertex; 8] {
+        let (w, h, d) = (size.0 / 2.0, size.1 / 2.0, size.2 / 2.0);
+        let (ox, oy, oz) = offset;
+        [
+            // Front face (z = +d)
+            Vertex { position: [ox - w, oy - h, oz + d], color },
+            Vertex { position: [ox + w, oy - h, oz + d], color },
+            Vertex { position: [ox + w, oy + h, oz + d], color },
+            Vertex { position: [ox - w, oy + h, oz + d], color },
+            // Back face (z = -d)
+            Vertex { position: [ox - w, oy - h, oz - d], color },
+            Vertex { position: [ox + w, oy - h, oz - d], color },
+            Vertex { position: [ox + w, oy + h, oz - d], color },
+            Vertex { position: [ox - w, oy + h, oz - d], color },
+        ]
+    }
+
+    /// Generate indices for a cube part, offset by the starting vertex index
+    const fn create_cube_indices(start: u16) -> [u16; 36] {
+        [
+            // Front face
+            start + 0, start + 1, start + 2, start + 2, start + 3, start + 0,
+            // Right face
+            start + 1, start + 5, start + 6, start + 6, start + 2, start + 1,
+            // Back face
+            start + 5, start + 4, start + 7, start + 7, start + 6, start + 5,
+            // Left face
+            start + 4, start + 0, start + 3, start + 3, start + 7, start + 4,
+            // Top face
+            start + 3, start + 2, start + 6, start + 6, start + 7, start + 3,
+            // Bottom face
+            start + 4, start + 5, start + 1, start + 1, start + 0, start + 4,
+        ]
+    }
+
+    /// Build humanoid vertices from body parts
+    /// Returns (vertices, indices) for the complete humanoid mesh
+    pub fn build_humanoid_mesh(color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
+        let mut vertices = Vec::with_capacity(48); // 6 parts * 8 vertices
+        let mut indices = Vec::with_capacity(216); // 6 parts * 36 indices
+
+        // Head: 0.4×0.4×0.4 at y=1.6 (center at 1.6, so bottom at 1.4, top at 1.8)
+        let head = create_cube_vertices((0.4, 0.4, 0.4), (0.0, 1.6, 0.0), color);
+        vertices.extend_from_slice(&head);
+
+        // Torso: 0.6×0.8×0.3 at y=1.0 (center at 1.0, so bottom at 0.6, top at 1.4)
+        let torso = create_cube_vertices((0.6, 0.8, 0.3), (0.0, 1.0, 0.0), color);
+        vertices.extend_from_slice(&torso);
+
+        // Left Arm: 0.2×0.6×0.2 at x=-0.4, y=1.0
+        let left_arm = create_cube_vertices((0.2, 0.6, 0.2), (-0.4, 1.0, 0.0), color);
+        vertices.extend_from_slice(&left_arm);
+
+        // Right Arm: 0.2×0.6×0.2 at x=+0.4, y=1.0
+        let right_arm = create_cube_vertices((0.2, 0.6, 0.2), (0.4, 1.0, 0.0), color);
+        vertices.extend_from_slice(&right_arm);
+
+        // Left Leg: 0.2×0.8×0.2 at x=-0.15, y=0.4 (center at 0.4, so bottom at 0.0, top at 0.8)
+        let left_leg = create_cube_vertices((0.2, 0.8, 0.2), (-0.15, 0.4, 0.0), color);
+        vertices.extend_from_slice(&left_leg);
+
+        // Right Leg: 0.2×0.8×0.2 at x=+0.15, y=0.4
+        let right_leg = create_cube_vertices((0.2, 0.8, 0.2), (0.15, 0.4, 0.0), color);
+        vertices.extend_from_slice(&right_leg);
+
+        // Add indices for each part (6 parts, 8 vertices each)
+        for i in 0..6 {
+            let part_indices = create_cube_indices(i * 8);
+            indices.extend_from_slice(&part_indices);
+        }
+
+        (vertices, indices)
+    }
+
     /// Holds all wgpu state needed for rendering
     pub struct RenderState<'window> {
         pub surface: Surface<'window>,
@@ -341,6 +430,9 @@ pub mod render {
         ground_vertex_buffer: Buffer,
         ground_index_buffer: Buffer,
         ground_num_indices: u32,
+        humanoid_vertex_buffer: Buffer,
+        humanoid_index_buffer: Buffer,
+        humanoid_num_indices: u32,
         uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
@@ -433,6 +525,20 @@ pub mod render {
             });
             let ground_num_indices = GROUND_INDICES.len() as u32;
 
+            // Create humanoid mesh buffers
+            let (humanoid_vertices, humanoid_indices) = build_humanoid_mesh(PLAYER_BLUE);
+            let humanoid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Humanoid Vertex Buffer"),
+                contents: bytemuck::cast_slice(&humanoid_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let humanoid_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Humanoid Index Buffer"),
+                contents: bytemuck::cast_slice(&humanoid_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let humanoid_num_indices = humanoid_indices.len() as u32;
+
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("MVP Uniform Buffer"),
@@ -521,6 +627,9 @@ pub mod render {
                 ground_vertex_buffer,
                 ground_index_buffer,
                 ground_num_indices,
+                humanoid_vertex_buffer,
+                humanoid_index_buffer,
+                humanoid_num_indices,
                 uniform_buffer,
                 bind_group,
                 pipeline,
@@ -583,7 +692,12 @@ pub mod render {
                 render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
 
-                // Draw cube
+                // Draw humanoid character at origin
+                render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.humanoid_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.humanoid_num_indices, 0, 0..1);
+
+                // Draw cube (for reference)
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -977,5 +1091,82 @@ mod tests {
         assert_eq!(max_x, 25.0);
         assert_eq!(min_z, -25.0);
         assert_eq!(max_z, 25.0);
+    }
+
+    #[test]
+    fn test_humanoid_vertex_count() {
+        use crate::render::build_humanoid_mesh;
+
+        let (vertices, _) = build_humanoid_mesh([0.0, 0.0, 1.0]);
+        // 6 body parts * 8 vertices each = 48 vertices
+        assert_eq!(vertices.len(), 48);
+    }
+
+    #[test]
+    fn test_humanoid_index_count() {
+        use crate::render::build_humanoid_mesh;
+
+        let (_, indices) = build_humanoid_mesh([0.0, 0.0, 1.0]);
+        // 6 body parts * 36 indices each = 216 indices
+        assert_eq!(indices.len(), 216);
+    }
+
+    #[test]
+    fn test_humanoid_indices_valid() {
+        use crate::render::build_humanoid_mesh;
+
+        let (vertices, indices) = build_humanoid_mesh([0.0, 0.0, 1.0]);
+        // All indices should be within vertex bounds
+        for &index in &indices {
+            assert!(
+                (index as usize) < vertices.len(),
+                "Index {} out of bounds for {} vertices",
+                index,
+                vertices.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_humanoid_has_correct_color() {
+        use crate::render::build_humanoid_mesh;
+
+        let color = [0.267, 0.267, 1.0];
+        let (vertices, _) = build_humanoid_mesh(color);
+
+        // All vertices should have the specified color
+        for vertex in &vertices {
+            assert_eq!(vertex.color, color);
+        }
+    }
+
+    #[test]
+    fn test_humanoid_height() {
+        use crate::render::build_humanoid_mesh;
+
+        let (vertices, _) = build_humanoid_mesh([0.0, 0.0, 1.0]);
+
+        // Find min and max Y coordinates
+        let min_y = vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
+        let max_y = vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+
+        // Humanoid should be on the ground (min_y = 0) and about 1.8 units tall (head top at 1.8)
+        assert!(min_y.abs() < 0.001, "Humanoid bottom should be at y=0, got {}", min_y);
+        assert!((max_y - 1.8).abs() < 0.001, "Humanoid top should be at y=1.8, got {}", max_y);
+    }
+
+    #[test]
+    fn test_humanoid_centered_horizontally() {
+        use crate::render::build_humanoid_mesh;
+
+        let (vertices, _) = build_humanoid_mesh([0.0, 0.0, 1.0]);
+
+        // Find min and max X coordinates
+        let min_x = vertices.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
+        let max_x = vertices.iter().map(|v| v.position[0]).fold(f32::NEG_INFINITY, f32::max);
+
+        // Humanoid should be roughly symmetric around x=0
+        // With arms at ±0.4 and arm width 0.2, extent is about ±0.5
+        assert!((min_x + max_x).abs() < 0.001, "Humanoid should be centered on X axis");
     }
 }
