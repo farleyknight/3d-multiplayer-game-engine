@@ -499,6 +499,46 @@ pub mod render {
         }
     }
 
+    /// Vertex with position, UV coordinates, and color for textured rendering.
+    /// Each face of a cube needs unique vertices for proper UV mapping (24 vertices per cube).
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+    pub struct TexturedVertex {
+        pub position: [f32; 3],
+        pub uv: [f32; 2],
+        pub color: [f32; 3],
+    }
+
+    impl TexturedVertex {
+        /// Vertex buffer layout descriptor for textured vertices
+        pub fn desc() -> VertexBufferLayout<'static> {
+            VertexBufferLayout {
+                array_stride: std::mem::size_of::<TexturedVertex>() as wgpu::BufferAddress,
+                step_mode: VertexStepMode::Vertex,
+                attributes: &[
+                    // position: shader_location 0
+                    VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: VertexFormat::Float32x3,
+                    },
+                    // uv: shader_location 1
+                    VertexAttribute {
+                        offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                        shader_location: 1,
+                        format: VertexFormat::Float32x2,
+                    },
+                    // color: shader_location 2
+                    VertexAttribute {
+                        offset: (std::mem::size_of::<[f32; 3]>() + std::mem::size_of::<[f32; 2]>()) as wgpu::BufferAddress,
+                        shader_location: 2,
+                        format: VertexFormat::Float32x3,
+                    },
+                ],
+            }
+        }
+    }
+
     /// Cube vertices with positions and colors (8 vertices, each corner a different color)
     pub const CUBE_VERTICES: &[Vertex] = &[
         // Front face (z = 0.5)
@@ -675,6 +715,76 @@ pub mod render {
             start + 3, start + 2, start + 6, start + 6, start + 7, start + 3,
             // Bottom face
             start + 4, start + 5, start + 1, start + 1, start, start + 4,
+        ]
+    }
+
+    /// Create 24 vertices for a textured cube (4 vertices per face, 6 faces).
+    /// Unlike shared-corner cubes, textured cubes need unique vertices per face for proper UV mapping.
+    /// UV coordinates map the full texture (0,0 to 1,1) to each face.
+    pub fn create_textured_cube_vertices(
+        size: (f32, f32, f32),
+        offset: (f32, f32, f32),
+        color: [f32; 3],
+    ) -> [TexturedVertex; 24] {
+        let (w, h, d) = (size.0 / 2.0, size.1 / 2.0, size.2 / 2.0);
+        let (ox, oy, oz) = offset;
+
+        [
+            // Front face (+Z) - vertices 0-3
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 0.0], color },
+
+            // Back face (-Z) - vertices 4-7
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [0.0, 0.0], color },
+
+            // Right face (+X) - vertices 8-11
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [0.0, 0.0], color },
+
+            // Left face (-X) - vertices 12-15
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color },
+
+            // Top face (+Y) - vertices 16-19
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color },
+
+            // Bottom face (-Y) - vertices 20-23
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 0.0], color },
+        ]
+    }
+
+    /// Generate indices for a textured cube (24-vertex layout).
+    /// Each face uses 4 vertices with indices: 0,1,2, 2,3,0 pattern.
+    /// Returns 36 indices (6 faces × 2 triangles × 3 vertices).
+    pub const fn create_textured_cube_indices(start: u16) -> [u16; 36] {
+        [
+            // Front face (vertices 0-3)
+            start + 0, start + 1, start + 2, start + 2, start + 3, start + 0,
+            // Back face (vertices 4-7)
+            start + 4, start + 5, start + 6, start + 6, start + 7, start + 4,
+            // Right face (vertices 8-11)
+            start + 8, start + 9, start + 10, start + 10, start + 11, start + 8,
+            // Left face (vertices 12-15)
+            start + 12, start + 13, start + 14, start + 14, start + 15, start + 12,
+            // Top face (vertices 16-19)
+            start + 16, start + 17, start + 18, start + 18, start + 19, start + 16,
+            // Bottom face (vertices 20-23)
+            start + 20, start + 21, start + 22, start + 22, start + 23, start + 20,
         ]
     }
 
@@ -2593,5 +2703,171 @@ mod tests {
 
         // Creating the sampler should not panic
         let _sampler = create_pixel_art_sampler(&device);
+    }
+
+    // TexturedVertex and UV mapping tests
+    #[test]
+    fn test_textured_vertex_struct_size() {
+        use crate::render::TexturedVertex;
+
+        // TexturedVertex should be 8 floats (3 position + 2 uv + 3 color) = 32 bytes
+        assert_eq!(std::mem::size_of::<TexturedVertex>(), 32);
+    }
+
+    #[test]
+    fn test_textured_vertex_memory_layout() {
+        use crate::render::TexturedVertex;
+
+        // Verify the struct is properly aligned for GPU use
+        let vertex = TexturedVertex {
+            position: [1.0, 2.0, 3.0],
+            uv: [0.5, 0.5],
+            color: [1.0, 0.0, 0.0],
+        };
+
+        // Verify fields are accessible
+        assert_eq!(vertex.position, [1.0, 2.0, 3.0]);
+        assert_eq!(vertex.uv, [0.5, 0.5]);
+        assert_eq!(vertex.color, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_create_textured_cube_vertices_count() {
+        use crate::render::create_textured_cube_vertices;
+
+        let vertices = create_textured_cube_vertices(
+            (1.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            [1.0, 1.0, 1.0],
+        );
+
+        // 24 vertices: 4 vertices per face × 6 faces
+        assert_eq!(vertices.len(), 24);
+    }
+
+    #[test]
+    fn test_create_textured_cube_vertices_uv_range() {
+        use crate::render::create_textured_cube_vertices;
+
+        let vertices = create_textured_cube_vertices(
+            (1.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            [1.0, 1.0, 1.0],
+        );
+
+        // All UV coordinates should be in [0, 1] range
+        for vertex in &vertices {
+            assert!(
+                vertex.uv[0] >= 0.0 && vertex.uv[0] <= 1.0,
+                "UV u coordinate out of range: {}",
+                vertex.uv[0]
+            );
+            assert!(
+                vertex.uv[1] >= 0.0 && vertex.uv[1] <= 1.0,
+                "UV v coordinate out of range: {}",
+                vertex.uv[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_textured_cube_vertices_has_all_uv_corners() {
+        use crate::render::create_textured_cube_vertices;
+
+        let vertices = create_textured_cube_vertices(
+            (1.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            [1.0, 1.0, 1.0],
+        );
+
+        // Each face (4 vertices) should have UV corners: (0,0), (1,0), (1,1), (0,1)
+        // Check that all 6 faces have proper UV mapping
+        for face_idx in 0..6 {
+            let face_start = face_idx * 4;
+            let face_uvs: Vec<[f32; 2]> = (0..4)
+                .map(|i| vertices[face_start + i].uv)
+                .collect();
+
+            // Each face should contain all 4 UV corners
+            let has_00 = face_uvs.iter().any(|uv| uv[0] == 0.0 && uv[1] == 0.0);
+            let has_10 = face_uvs.iter().any(|uv| uv[0] == 1.0 && uv[1] == 0.0);
+            let has_11 = face_uvs.iter().any(|uv| uv[0] == 1.0 && uv[1] == 1.0);
+            let has_01 = face_uvs.iter().any(|uv| uv[0] == 0.0 && uv[1] == 1.0);
+
+            assert!(
+                has_00 && has_10 && has_11 && has_01,
+                "Face {} does not have all UV corners: {:?}",
+                face_idx,
+                face_uvs
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_textured_cube_vertices_color() {
+        use crate::render::create_textured_cube_vertices;
+
+        let color = [0.5, 0.3, 0.1];
+        let vertices = create_textured_cube_vertices(
+            (1.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            color,
+        );
+
+        // All vertices should have the specified color
+        for vertex in &vertices {
+            assert_eq!(vertex.color, color);
+        }
+    }
+
+    #[test]
+    fn test_create_textured_cube_indices_count() {
+        use crate::render::create_textured_cube_indices;
+
+        let indices = create_textured_cube_indices(0);
+
+        // 36 indices: 6 faces × 2 triangles × 3 vertices
+        assert_eq!(indices.len(), 36);
+    }
+
+    #[test]
+    fn test_create_textured_cube_indices_valid() {
+        use crate::render::{create_textured_cube_indices, create_textured_cube_vertices};
+
+        let vertices = create_textured_cube_vertices(
+            (1.0, 1.0, 1.0),
+            (0.0, 0.0, 0.0),
+            [1.0, 1.0, 1.0],
+        );
+        let indices = create_textured_cube_indices(0);
+
+        // All indices should be within vertex bounds
+        for &index in &indices {
+            assert!(
+                (index as usize) < vertices.len(),
+                "Index {} out of bounds for {} vertices",
+                index,
+                vertices.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_create_textured_cube_indices_with_offset() {
+        use crate::render::create_textured_cube_indices;
+
+        let start_offset = 24u16;
+        let indices = create_textured_cube_indices(start_offset);
+
+        // All indices should be offset by the start value
+        for &index in &indices {
+            assert!(
+                index >= start_offset && index < start_offset + 24,
+                "Index {} should be in range [{}, {})",
+                index,
+                start_offset,
+                start_offset + 24
+            );
+        }
     }
 }
