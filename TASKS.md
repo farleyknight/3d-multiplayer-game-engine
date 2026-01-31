@@ -56,8 +56,8 @@
 
 ## Documentation & Deployment
 - [x] Add: Create README.md with project overview → README.md exists with build instructions, features, and screenshots section
-- [ ] Add: Push repository to GitHub → `git remote -v` shows GitHub origin and `git push` succeeds
-- [ ] Verify: GitHub Actions builds the game correctly → GitHub Actions CI shows green checkmarks on both macOS and Windows
+- [x] Add: Push repository to GitHub → `git remote -v` shows GitHub origin and `git push` succeeds
+- [x] Verify: GitHub Actions builds the game correctly → GitHub Actions CI shows green checkmarks on both macOS and Windows
 
 ## 3D World - Floor & Physics
 - [ ] Add: Ground floor for player to stand and jump from → Player spawns on a solid floor at y=0, cannot fall through
