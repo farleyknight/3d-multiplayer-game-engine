@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use game_engine::network::{
     deserialize_server_packet, serialize_client_packet, ClientPacket, ServerPacket, DEFAULT_PORT,
 };
 use std::io::ErrorKind;
-use game_engine::{render, types::PlayerState};
+use game_engine::{render, types::{PlayerData, PlayerState}};
 use glam::Vec3;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
@@ -88,6 +89,9 @@ fn main() {
 
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
+
+    // Other players received from WorldState broadcasts
+    let mut other_players: HashMap<u32, PlayerData> = HashMap::new();
 
     // Initialize camera to follow player from the start
     let (cam_pos, cam_target) = calculate_camera_from_player(&player);
@@ -255,9 +259,12 @@ fn main() {
                                                     );
                                                 }
                                                 ServerPacket::WorldState { players } => {
-                                                    for p in &players {
+                                                    // Update other_players map with received world state
+                                                    // Only include players that aren't the local player
+                                                    other_players.clear();
+                                                    for p in players {
                                                         if p.player_id != player.player_id {
-                                                            log::info!(
+                                                            log::debug!(
                                                                 "Other player {}: pos=({:.2}, {:.2}, {:.2}), yaw={:.2}",
                                                                 p.player_id,
                                                                 p.position.x,
@@ -265,11 +272,13 @@ fn main() {
                                                                 p.position.z,
                                                                 p.rotation_yaw
                                                             );
+                                                            other_players.insert(p.player_id, p);
                                                         }
                                                     }
                                                 }
                                                 ServerPacket::PlayerLeft { player_id: left_id } => {
                                                     log::info!("Player {} left the game", left_id);
+                                                    other_players.remove(&left_id);
                                                 }
                                             },
                                             Err(e) => {
@@ -288,7 +297,17 @@ fn main() {
                                 }
                             }
 
-                            match render_state.render() {
+                            // Collect other players' positions for rendering
+                            let other_players_vec: Vec<(glam::Vec3, f32)> = other_players
+                                .values()
+                                .map(|p| (p.position, p.rotation_yaw))
+                                .collect();
+
+                            match render_state.render_with_players(
+                                player.position,
+                                player.rotation_yaw,
+                                &other_players_vec,
+                            ) {
                                 Ok(_) => {}
                                 Err(wgpu::SurfaceError::Lost) => {
                                     render_state.resize(render_state.size);

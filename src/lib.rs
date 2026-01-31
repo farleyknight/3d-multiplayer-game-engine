@@ -219,6 +219,14 @@ pub mod render {
         pub far: f32,
     }
 
+    /// Calculate model matrix for a player at given position and rotation
+    /// Rotation is around Y axis (yaw) in radians
+    pub fn player_model_matrix(position: Vec3, rotation_yaw: f32) -> Mat4 {
+        let translation = Mat4::from_translation(position);
+        let rotation = Mat4::from_rotation_y(rotation_yaw);
+        translation * rotation
+    }
+
     impl Camera {
         /// Create a new camera with default parameters
         pub fn new(position: Vec3, target: Vec3, aspect_ratio: f32) -> Self {
@@ -333,7 +341,10 @@ pub mod render {
     // Legs: 0.2×0.8×0.2 at ±0.15 from center, y=0.4
 
     /// Local player color: Blue (#4444FF)
-    const PLAYER_BLUE: [f32; 3] = [0.267, 0.267, 1.0];
+    pub const PLAYER_BLUE: [f32; 3] = [0.267, 0.267, 1.0];
+
+    /// Other player color: Red (#FF4444)
+    pub const OTHER_PLAYER_RED: [f32; 3] = [1.0, 0.267, 0.267];
 
     /// Static environment object definition
     pub struct StaticObject {
@@ -477,6 +488,9 @@ pub mod render {
         humanoid_vertex_buffer: Buffer,
         humanoid_index_buffer: Buffer,
         humanoid_num_indices: u32,
+        other_player_vertex_buffer: Buffer,
+        other_player_index_buffer: Buffer,
+        other_player_num_indices: u32,
         static_objects_vertex_buffer: Buffer,
         static_objects_index_buffer: Buffer,
         static_objects_num_indices: u32,
@@ -572,7 +586,7 @@ pub mod render {
             });
             let ground_num_indices = GROUND_INDICES.len() as u32;
 
-            // Create humanoid mesh buffers
+            // Create humanoid mesh buffers for local player (blue)
             let (humanoid_vertices, humanoid_indices) = build_humanoid_mesh(PLAYER_BLUE);
             let humanoid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Humanoid Vertex Buffer"),
@@ -585,6 +599,20 @@ pub mod render {
                 usage: BufferUsages::INDEX,
             });
             let humanoid_num_indices = humanoid_indices.len() as u32;
+
+            // Create humanoid mesh buffers for other players (red)
+            let (other_player_vertices, other_player_indices) = build_humanoid_mesh(OTHER_PLAYER_RED);
+            let other_player_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Other Player Vertex Buffer"),
+                contents: bytemuck::cast_slice(&other_player_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let other_player_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Other Player Index Buffer"),
+                contents: bytemuck::cast_slice(&other_player_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let other_player_num_indices = other_player_indices.len() as u32;
 
             // Create static objects mesh buffers
             let (static_objects_vertices, static_objects_indices) = build_static_objects_mesh();
@@ -691,6 +719,9 @@ pub mod render {
                 humanoid_vertex_buffer,
                 humanoid_index_buffer,
                 humanoid_num_indices,
+                other_player_vertex_buffer,
+                other_player_index_buffer,
+                other_player_num_indices,
                 static_objects_vertex_buffer,
                 static_objects_index_buffer,
                 static_objects_num_indices,
@@ -711,16 +742,21 @@ pub mod render {
             }
         }
 
-        /// Render a frame with the cube
+        /// Render a frame with the cube (legacy, renders humanoid at origin)
         pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-            // Calculate MVP matrix (model is identity since cube is at origin)
-            let model = Mat4::IDENTITY;
-            let mvp = self.camera.view_projection_matrix() * model;
+            self.render_with_players(Vec3::ZERO, 0.0, &[])
+        }
 
-            // Write MVP matrix to uniform buffer
-            self.queue
-                .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
-
+        /// Render a frame with the local player and other players
+        /// - local_position: position of the local player's humanoid
+        /// - local_rotation_yaw: rotation of the local player in radians
+        /// - other_players: slice of (position, rotation_yaw) for other players to render
+        pub fn render_with_players(
+            &mut self,
+            local_position: Vec3,
+            local_rotation_yaw: f32,
+            other_players: &[(Vec3, f32)],
+        ) -> Result<(), wgpu::SurfaceError> {
             let output = self.surface.get_current_texture()?;
             let view = output
                 .texture
@@ -749,27 +785,87 @@ pub mod render {
                 });
 
                 render_pass.set_pipeline(&self.pipeline);
-                render_pass.set_bind_group(0, &self.bind_group, &[]);
 
-                // Draw ground plane first
+                // Draw ground plane first (identity model matrix)
+                let ground_mvp = self.camera.view_projection_matrix();
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[ground_mvp]));
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
 
-                // Draw static environment objects
+                // Draw static environment objects (identity model matrix, same MVP)
                 render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
 
-                // Draw humanoid character at origin
-                render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(self.humanoid_index_buffer.slice(..), IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.humanoid_num_indices, 0, 0..1);
-
-                // Draw cube (for reference)
+                // Draw cube (for reference, identity model matrix)
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+
+            // We need to end the render pass to update the uniform buffer for each player
+            // Then create a new render pass for each player with their model matrix
+            // This is inefficient but works without changing the shader
+
+            // Draw local player (blue humanoid) at their position
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Local Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load, // Don't clear, load existing content
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(local_position, local_rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.humanoid_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.humanoid_num_indices, 0, 0..1);
+            }
+
+            // Draw each other player (red humanoid) at their position
+            for (position, rotation_yaw) in other_players {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Other Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(*position, *rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.other_player_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.other_player_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.other_player_num_indices, 0, 0..1);
             }
 
             self.queue.submit(std::iter::once(encoder.finish()));
@@ -1293,6 +1389,103 @@ mod tests {
                 "Static object at ({}, {}, {}) is too close to origin spawn point",
                 obj.position.0, obj.position.1, obj.position.2
             );
+        }
+    }
+
+    #[test]
+    fn test_other_player_red_color() {
+        use crate::render::OTHER_PLAYER_RED;
+
+        // Other player color is #FF4444 = RGB(255, 68, 68) = (1.0, 0.267, 0.267)
+        const TOLERANCE: f32 = 0.01;
+        assert!((OTHER_PLAYER_RED[0] - 1.0).abs() < TOLERANCE);
+        assert!((OTHER_PLAYER_RED[1] - 0.267).abs() < TOLERANCE);
+        assert!((OTHER_PLAYER_RED[2] - 0.267).abs() < TOLERANCE);
+    }
+
+    #[test]
+    fn test_player_model_matrix_identity_at_origin() {
+        use crate::render::player_model_matrix;
+        use glam::Mat4;
+
+        // At origin with no rotation, model matrix should be identity
+        let model = player_model_matrix(Vec3::ZERO, 0.0);
+        let identity = Mat4::IDENTITY;
+
+        for i in 0..16 {
+            let row = i / 4;
+            let col = i % 4;
+            assert!(
+                (model.col(col)[row] - identity.col(col)[row]).abs() < 0.001,
+                "Model matrix should be identity at origin with yaw=0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_player_model_matrix_translation() {
+        use crate::render::player_model_matrix;
+        use glam::Vec4;
+
+        // With translation but no rotation
+        let position = Vec3::new(5.0, 0.0, -3.0);
+        let model = player_model_matrix(position, 0.0);
+
+        // Transform a point at origin - should move to position
+        let origin = Vec4::new(0.0, 0.0, 0.0, 1.0);
+        let transformed = model * origin;
+
+        const TOLERANCE: f32 = 0.001;
+        assert!((transformed.x - 5.0).abs() < TOLERANCE);
+        assert!((transformed.y - 0.0).abs() < TOLERANCE);
+        assert!((transformed.z - (-3.0)).abs() < TOLERANCE);
+    }
+
+    #[test]
+    fn test_player_model_matrix_rotation() {
+        use crate::render::player_model_matrix;
+        use glam::Vec4;
+        use std::f32::consts::PI;
+
+        // With 90 degree rotation (positive yaw = clockwise when viewed from above)
+        // point at (0, 0, 1) should move to (1, 0, 0)
+        let model = player_model_matrix(Vec3::ZERO, PI / 2.0);
+        let point = Vec4::new(0.0, 0.0, 1.0, 1.0);
+        let transformed = model * point;
+
+        const TOLERANCE: f32 = 0.001;
+        assert!((transformed.x - 1.0).abs() < TOLERANCE, "X should be 1, got {}", transformed.x);
+        assert!(transformed.y.abs() < TOLERANCE, "Y should be 0, got {}", transformed.y);
+        assert!(transformed.z.abs() < TOLERANCE, "Z should be 0, got {}", transformed.z);
+    }
+
+    #[test]
+    fn test_player_model_matrix_translation_and_rotation() {
+        use crate::render::player_model_matrix;
+        use glam::Vec4;
+        use std::f32::consts::PI;
+
+        // Translation (10, 0, 5) and 180 degree rotation
+        // Point at origin relative to player should end up at the translation position
+        let model = player_model_matrix(Vec3::new(10.0, 0.0, 5.0), PI);
+        let origin = Vec4::new(0.0, 0.0, 0.0, 1.0);
+        let transformed = model * origin;
+
+        const TOLERANCE: f32 = 0.001;
+        assert!((transformed.x - 10.0).abs() < TOLERANCE, "X should be 10, got {}", transformed.x);
+        assert!(transformed.y.abs() < TOLERANCE, "Y should be 0, got {}", transformed.y);
+        assert!((transformed.z - 5.0).abs() < TOLERANCE, "Z should be 5, got {}", transformed.z);
+    }
+
+    #[test]
+    fn test_other_player_humanoid_has_red_color() {
+        use crate::render::{build_humanoid_mesh, OTHER_PLAYER_RED};
+
+        let (vertices, _) = build_humanoid_mesh(OTHER_PLAYER_RED);
+
+        // All vertices should have the red color
+        for vertex in &vertices {
+            assert_eq!(vertex.color, OTHER_PLAYER_RED);
         }
     }
 }
