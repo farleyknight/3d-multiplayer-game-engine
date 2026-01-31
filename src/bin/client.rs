@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use game_engine::network::{
-    self, deserialize_server_packet, serialize_client_packet, ClientPacket, ServerPacket,
-    DEFAULT_PORT,
+    deserialize_server_packet, serialize_client_packet, ClientPacket, ServerPacket, DEFAULT_PORT,
 };
 use std::io::ErrorKind;
 use game_engine::{render, types::PlayerState};
