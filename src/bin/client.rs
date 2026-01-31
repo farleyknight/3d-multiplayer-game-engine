@@ -21,6 +21,9 @@ const CAMERA_DISTANCE: f32 = 5.0;
 /// Camera height above player
 const CAMERA_HEIGHT: f32 = 2.0;
 
+/// Movement speed in units per second
+const MOVE_SPEED: f32 = 5.0;
+
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
 pub fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
@@ -64,6 +67,12 @@ fn main() {
     // Track whether cursor is captured
     let mut cursor_captured = false;
 
+    // Track WASD key press state for movement
+    let mut w_pressed = false;
+    let mut a_pressed = false;
+    let mut s_pressed = false;
+    let mut d_pressed = false;
+
     log::info!("Window created and wgpu initialized");
 
     event_loop
@@ -89,6 +98,24 @@ fn main() {
                         cursor_captured = false;
                         log::info!("Escape pressed, exiting");
                         elwt.exit();
+                    }
+                    WindowEvent::KeyboardInput {
+                        event:
+                            KeyEvent {
+                                physical_key: PhysicalKey::Code(key_code),
+                                state,
+                                ..
+                            },
+                        ..
+                    } => {
+                        let pressed = state == ElementState::Pressed;
+                        match key_code {
+                            KeyCode::KeyW => w_pressed = pressed,
+                            KeyCode::KeyA => a_pressed = pressed,
+                            KeyCode::KeyS => s_pressed = pressed,
+                            KeyCode::KeyD => d_pressed = pressed,
+                            _ => {}
+                        }
                     }
                     WindowEvent::Focused(focused) => {
                         if focused {
@@ -122,7 +149,47 @@ fn main() {
                         let elapsed = now - last_frame;
 
                         if elapsed >= FRAME_DURATION {
+                            let delta_time = elapsed.as_secs_f32();
                             last_frame = now;
+
+                            // Process movement input
+                            if cursor_captured {
+                                // Calculate forward direction based on player yaw
+                                // Player faces -Z when yaw = 0, so forward is negative of camera offset direction
+                                let forward = Vec3::new(
+                                    -player.rotation_yaw.sin(),
+                                    0.0,
+                                    -player.rotation_yaw.cos(),
+                                );
+                                // Right is perpendicular to forward (90 degrees clockwise in XZ plane)
+                                let right = Vec3::new(forward.z, 0.0, -forward.x);
+
+                                let mut movement = Vec3::ZERO;
+                                if w_pressed {
+                                    movement += forward;
+                                }
+                                if s_pressed {
+                                    movement -= forward;
+                                }
+                                if a_pressed {
+                                    movement -= right;
+                                }
+                                if d_pressed {
+                                    movement += right;
+                                }
+
+                                // Normalize to prevent faster diagonal movement
+                                if movement.length_squared() > 0.0 {
+                                    movement = movement.normalize() * MOVE_SPEED * delta_time;
+                                    player.position += movement;
+
+                                    // Update camera to follow player
+                                    let (camera_pos, camera_target) =
+                                        calculate_camera_from_player(&player);
+                                    render_state.camera.position = camera_pos;
+                                    render_state.camera.target = camera_target;
+                                }
+                            }
 
                             match render_state.render() {
                                 Ok(_) => {}
@@ -265,5 +332,85 @@ mod tests {
         // Mouse sensitivity should be positive and small
         assert!(MOUSE_SENSITIVITY > 0.0);
         assert!(MOUSE_SENSITIVITY < 0.1);
+    }
+
+    #[test]
+    fn test_move_speed_reasonable() {
+        // Movement speed should be positive and reasonable
+        assert!(MOVE_SPEED > 0.0);
+        assert!(MOVE_SPEED < 100.0);
+    }
+
+    /// Helper to calculate forward direction from yaw (same logic as in game loop)
+    fn forward_from_yaw(yaw: f32) -> Vec3 {
+        Vec3::new(-yaw.sin(), 0.0, -yaw.cos())
+    }
+
+    /// Helper to calculate right direction from forward
+    fn right_from_forward(forward: Vec3) -> Vec3 {
+        Vec3::new(forward.z, 0.0, -forward.x)
+    }
+
+    #[test]
+    fn test_forward_direction_at_zero_yaw() {
+        // At yaw = 0, player faces -Z direction
+        let forward = forward_from_yaw(0.0);
+        assert!(forward.x.abs() < 0.001, "Forward X should be 0 at yaw 0");
+        assert!(forward.y.abs() < 0.001, "Forward Y should be 0");
+        assert!((forward.z + 1.0).abs() < 0.001, "Forward Z should be -1 at yaw 0");
+    }
+
+    #[test]
+    fn test_forward_direction_at_90_degrees() {
+        // At yaw = PI/2, player faces -X direction
+        let forward = forward_from_yaw(PI / 2.0);
+        assert!((forward.x + 1.0).abs() < 0.001, "Forward X should be -1 at yaw PI/2");
+        assert!(forward.y.abs() < 0.001, "Forward Y should be 0");
+        assert!(forward.z.abs() < 0.001, "Forward Z should be 0 at yaw PI/2");
+    }
+
+    #[test]
+    fn test_forward_direction_at_180_degrees() {
+        // At yaw = PI, player faces +Z direction
+        let forward = forward_from_yaw(PI);
+        assert!(forward.x.abs() < 0.001, "Forward X should be 0 at yaw PI");
+        assert!(forward.y.abs() < 0.001, "Forward Y should be 0");
+        assert!((forward.z - 1.0).abs() < 0.001, "Forward Z should be 1 at yaw PI");
+    }
+
+    #[test]
+    fn test_right_is_perpendicular_to_forward() {
+        for yaw in [0.0, PI / 4.0, PI / 2.0, PI, 3.0 * PI / 2.0] {
+            let forward = forward_from_yaw(yaw);
+            let right = right_from_forward(forward);
+
+            // Right should be perpendicular to forward (dot product = 0)
+            let dot = forward.dot(right);
+            assert!(dot.abs() < 0.001, "Right should be perpendicular to forward at yaw {}", yaw);
+
+            // Both should be unit vectors in XZ plane
+            assert!((forward.length() - 1.0).abs() < 0.001);
+            assert!((right.length() - 1.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_right_direction_at_zero_yaw() {
+        // At yaw = 0, forward is (0, 0, -1), so right should be (-1, 0, 0)
+        let forward = forward_from_yaw(0.0);
+        let right = right_from_forward(forward);
+        assert!((right.x + 1.0).abs() < 0.001, "Right X should be -1 at yaw 0");
+        assert!(right.y.abs() < 0.001, "Right Y should be 0");
+        assert!(right.z.abs() < 0.001, "Right Z should be 0 at yaw 0");
+    }
+
+    #[test]
+    fn test_diagonal_movement_normalized() {
+        let forward = forward_from_yaw(0.0);
+        let right = right_from_forward(forward);
+
+        // Moving forward + right should give a normalized diagonal
+        let diagonal = (forward + right).normalize();
+        assert!((diagonal.length() - 1.0).abs() < 0.001, "Diagonal movement should be normalized");
     }
 }

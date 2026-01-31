@@ -25,7 +25,7 @@
 
 ## Client Input & Movement
 - [x] Implement mouse capture and look controls → Mouse captured, moving mouse rotates camera/player yaw
-- [ ] Implement WASD movement relative to facing direction → Character moves forward/back/strafe based on input
+- [x] Implement WASD movement relative to facing direction → Character moves forward/back/strafe based on input
 
 ## Client Camera
 - [ ] Implement third-person camera following player → Camera stays 5 units behind, 2 units up, follows rotation
