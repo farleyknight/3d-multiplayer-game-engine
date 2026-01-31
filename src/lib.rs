@@ -309,6 +309,23 @@ pub mod render {
         4, 5, 1, 1, 0, 4,
     ];
 
+    /// Dark gray color for the ground plane (#404040 = 0.251, 0.251, 0.251)
+    const GROUND_GRAY: [f32; 3] = [0.251, 0.251, 0.251];
+
+    /// Ground plane vertices (50x50 quad at y=0, centered at origin)
+    pub const GROUND_VERTICES: &[Vertex] = &[
+        Vertex { position: [-25.0, 0.0, -25.0], color: GROUND_GRAY }, // 0: back-left
+        Vertex { position: [ 25.0, 0.0, -25.0], color: GROUND_GRAY }, // 1: back-right
+        Vertex { position: [ 25.0, 0.0,  25.0], color: GROUND_GRAY }, // 2: front-right
+        Vertex { position: [-25.0, 0.0,  25.0], color: GROUND_GRAY }, // 3: front-left
+    ];
+
+    /// Ground plane indices (2 triangles = 6 indices)
+    pub const GROUND_INDICES: &[u16] = &[
+        0, 1, 2, // first triangle
+        2, 3, 0, // second triangle
+    ];
+
     /// Holds all wgpu state needed for rendering
     pub struct RenderState<'window> {
         pub surface: Surface<'window>,
@@ -321,6 +338,9 @@ pub mod render {
         vertex_buffer: Buffer,
         index_buffer: Buffer,
         num_indices: u32,
+        ground_vertex_buffer: Buffer,
+        ground_index_buffer: Buffer,
+        ground_num_indices: u32,
         uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
@@ -397,6 +417,21 @@ pub mod render {
                 usage: BufferUsages::INDEX,
             });
             let num_indices = CUBE_INDICES.len() as u32;
+
+            // Create ground vertex buffer
+            let ground_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ground Vertex Buffer"),
+                contents: bytemuck::cast_slice(GROUND_VERTICES),
+                usage: BufferUsages::VERTEX,
+            });
+
+            // Create ground index buffer
+            let ground_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ground Index Buffer"),
+                contents: bytemuck::cast_slice(GROUND_INDICES),
+                usage: BufferUsages::INDEX,
+            });
+            let ground_num_indices = GROUND_INDICES.len() as u32;
 
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -483,6 +518,9 @@ pub mod render {
                 vertex_buffer,
                 index_buffer,
                 num_indices,
+                ground_vertex_buffer,
+                ground_index_buffer,
+                ground_num_indices,
                 uniform_buffer,
                 bind_group,
                 pipeline,
@@ -539,6 +577,13 @@ pub mod render {
 
                 render_pass.set_pipeline(&self.pipeline);
                 render_pass.set_bind_group(0, &self.bind_group, &[]);
+
+                // Draw ground plane first
+                render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
+
+                // Draw cube
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -875,5 +920,62 @@ mod tests {
 
         // Vertex should be 6 floats (3 position + 3 color) = 24 bytes
         assert_eq!(std::mem::size_of::<Vertex>(), 24);
+    }
+
+    #[test]
+    fn test_ground_vertex_count() {
+        use crate::render::GROUND_VERTICES;
+
+        // 4 vertices for a quad
+        assert_eq!(GROUND_VERTICES.len(), 4);
+    }
+
+    #[test]
+    fn test_ground_index_count() {
+        use crate::render::GROUND_INDICES;
+
+        // 6 indices for 2 triangles
+        assert_eq!(GROUND_INDICES.len(), 6);
+    }
+
+    #[test]
+    fn test_ground_indices_valid() {
+        use crate::render::{GROUND_INDICES, GROUND_VERTICES};
+
+        // All indices should be within vertex bounds
+        for &index in GROUND_INDICES {
+            assert!(
+                (index as usize) < GROUND_VERTICES.len(),
+                "Index {} out of bounds for {} vertices",
+                index,
+                GROUND_VERTICES.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_ground_vertices_at_y_zero() {
+        use crate::render::GROUND_VERTICES;
+
+        // All ground vertices should be at y=0
+        for vertex in GROUND_VERTICES {
+            assert_eq!(vertex.position[1], 0.0, "Ground vertex should be at y=0");
+        }
+    }
+
+    #[test]
+    fn test_ground_plane_size() {
+        use crate::render::GROUND_VERTICES;
+
+        // Ground plane should be 50x50, centered at origin (-25 to 25)
+        let min_x = GROUND_VERTICES.iter().map(|v| v.position[0]).fold(f32::INFINITY, f32::min);
+        let max_x = GROUND_VERTICES.iter().map(|v| v.position[0]).fold(f32::NEG_INFINITY, f32::max);
+        let min_z = GROUND_VERTICES.iter().map(|v| v.position[2]).fold(f32::INFINITY, f32::min);
+        let max_z = GROUND_VERTICES.iter().map(|v| v.position[2]).fold(f32::NEG_INFINITY, f32::max);
+
+        assert_eq!(min_x, -25.0);
+        assert_eq!(max_x, 25.0);
+        assert_eq!(min_z, -25.0);
+        assert_eq!(max_z, 25.0);
     }
 }

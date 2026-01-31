@@ -19,7 +19,7 @@
 - [x] Create simple colored mesh rendering (cube primitive) → Colored cube renders correctly on screen → Note: was implemented with camera task
 
 ## Client Scene
-- [ ] Render ground plane at y=0 → Gray 50×50 quad visible in scene
+- [x] Render ground plane at y=0 → Gray 50×50 quad visible in scene
 - [ ] Render humanoid character from basic shapes → Multi-part character (head, torso, arms, legs) visible
 - [ ] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
 
