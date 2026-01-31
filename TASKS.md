@@ -14,7 +14,7 @@
 - [x] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
 
 ## Client Rendering Foundation
-- [ ] Set up wgpu + winit window with basic render loop → Window opens, clears to sky blue, runs at 60fps
+- [x] Set up wgpu + winit window with basic render loop → Window opens, clears to sky blue, runs at 60fps
 - [ ] Implement perspective camera with view/projection matrices → Cube rendered at origin appears in 3D perspective
 - [ ] Create simple colored mesh rendering (cube primitive) → Colored cube renders correctly on screen
 

@@ -161,10 +161,148 @@ pub mod network {
     }
 }
 
-/// Placeholder module for future rendering code
+/// Rendering module with wgpu initialization and render loop
 pub mod render {
+    use std::sync::Arc;
+    use wgpu::{
+        Color, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, Instance,
+        InstanceDescriptor, Limits, LoadOp, Operations, PowerPreference, Queue,
+        RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions, StoreOp, Surface,
+        SurfaceConfiguration, TextureUsages, TextureViewDescriptor,
+    };
+    use winit::dpi::PhysicalSize;
+    use winit::window::Window;
+
     /// Window title for the game client
     pub const WINDOW_TITLE: &str = "3D Multiplayer Game";
+
+    /// Sky blue clear color (#87CEEB = RGB 135, 206, 235)
+    pub const SKY_BLUE: Color = Color {
+        r: 135.0 / 255.0,
+        g: 206.0 / 255.0,
+        b: 235.0 / 255.0,
+        a: 1.0,
+    };
+
+    /// Holds all wgpu state needed for rendering
+    pub struct RenderState<'window> {
+        pub surface: Surface<'window>,
+        pub device: Device,
+        pub queue: Queue,
+        pub config: SurfaceConfiguration,
+        pub size: PhysicalSize<u32>,
+        pub window: Arc<Window>,
+    }
+
+    impl<'window> RenderState<'window> {
+        /// Initialize wgpu with the given window
+        pub async fn new(window: Arc<Window>) -> Self {
+            let size = window.inner_size();
+
+            let instance = Instance::new(InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                ..Default::default()
+            });
+
+            let surface = instance.create_surface(window.clone()).unwrap();
+
+            let adapter = instance
+                .request_adapter(&RequestAdapterOptions {
+                    power_preference: PowerPreference::default(),
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                })
+                .await
+                .expect("Failed to find a suitable GPU adapter");
+
+            let (device, queue) = adapter
+                .request_device(
+                    &DeviceDescriptor {
+                        required_features: Features::empty(),
+                        required_limits: Limits::default(),
+                        label: None,
+                    },
+                    None,
+                )
+                .await
+                .expect("Failed to create device");
+
+            let surface_caps = surface.get_capabilities(&adapter);
+            let surface_format = surface_caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| f.is_srgb())
+                .unwrap_or(surface_caps.formats[0]);
+
+            let config = SurfaceConfiguration {
+                usage: TextureUsages::RENDER_ATTACHMENT,
+                format: surface_format,
+                width: size.width,
+                height: size.height,
+                present_mode: surface_caps.present_modes[0],
+                alpha_mode: surface_caps.alpha_modes[0],
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+            };
+            surface.configure(&device, &config);
+
+            Self {
+                surface,
+                device,
+                queue,
+                config,
+                size,
+                window,
+            }
+        }
+
+        /// Handle window resize
+        pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
+            if new_size.width > 0 && new_size.height > 0 {
+                self.size = new_size;
+                self.config.width = new_size.width;
+                self.config.height = new_size.height;
+                self.surface.configure(&self.device, &self.config);
+            }
+        }
+
+        /// Render a frame (clears to sky blue)
+        pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+            let output = self.surface.get_current_texture()?;
+            let view = output
+                .texture
+                .create_view(&TextureViewDescriptor::default());
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
+
+            {
+                let _render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(SKY_BLUE),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+            }
+
+            self.queue.submit(std::iter::once(encoder.finish()));
+            output.present();
+
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
