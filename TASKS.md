@@ -84,4 +84,4 @@
 - [x] Add: Frame capture to video encoder → Capture rendered frames and encode to video format
 - [x] Add: Integration test with video output for movement → `tests/videos/movement_test.mp4` shows player WASD movement
 - [x] Add: Integration test with video output for jumping → `tests/videos/jump_test.mp4` shows player jumping
-- [ ] Add: Integration test with video output for block interaction → `tests/videos/block_interaction.mp4` shows block place/destroy
+- [x] Add: Integration test with video output for block interaction → `tests/videos/block_interaction.mp4` shows block place/destroy
