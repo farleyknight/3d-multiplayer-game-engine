@@ -438,3 +438,172 @@ fn test_player_timeout() {
         "Expected either WorldState or PlayerLeft packet after timeout"
     );
 }
+
+#[test]
+fn test_two_clients_see_each_other_move() {
+    let server = TestServer::start();
+    let client1 = create_client();
+    let client2 = create_client();
+
+    // Client 1 joins
+    let join1 = ClientPacket::PlayerUpdate(PlayerState::new(0));
+    let bytes = serialize_client_packet(&join1).expect("Failed to serialize");
+    client1
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+    let packets = receive_packets(&client1, 2);
+    let id1 = packets
+        .iter()
+        .find_map(|p| {
+            if let ServerPacket::Welcome { assigned_player_id } = p {
+                Some(*assigned_player_id)
+            } else {
+                None
+            }
+        })
+        .expect("Expected Welcome for client1");
+
+    // Client 2 joins
+    let join2 = ClientPacket::PlayerUpdate(PlayerState::new(0));
+    let bytes = serialize_client_packet(&join2).expect("Failed to serialize");
+    client2
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+    let packets = receive_packets(&client2, 2);
+    let id2 = packets
+        .iter()
+        .find_map(|p| {
+            if let ServerPacket::Welcome { assigned_player_id } = p {
+                Some(*assigned_player_id)
+            } else {
+                None
+            }
+        })
+        .expect("Expected Welcome for client2");
+
+    // Client 1 moves to position (5.0, 0.0, 5.0) with rotation 1.0
+    let client1_position = Vec3::new(5.0, 0.0, 5.0);
+    let client1_rotation = 1.0;
+    let update1 = ClientPacket::PlayerUpdate(PlayerState::with_transform(
+        id1,
+        client1_position,
+        client1_rotation,
+    ));
+    let bytes = serialize_client_packet(&update1).expect("Failed to serialize");
+    client1
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+    // Drain client1's WorldState response
+    let _ = receive_packets(&client1, 1);
+
+    // Client 2 sends an update to trigger WorldState broadcast
+    let update2_trigger = ClientPacket::PlayerUpdate(PlayerState::with_transform(
+        id2,
+        Vec3::ZERO,
+        0.0,
+    ));
+    let bytes = serialize_client_packet(&update2_trigger).expect("Failed to serialize");
+    client2
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+
+    // Client 2 receives WorldState and verifies Client 1's position
+    let packets = receive_packets(&client2, 1);
+    let world_state = packets
+        .iter()
+        .find(|p| matches!(p, ServerPacket::WorldState { .. }))
+        .expect("Expected WorldState packet for client2");
+
+    if let ServerPacket::WorldState { players } = world_state {
+        let client1_data = players
+            .iter()
+            .find(|p| p.player_id == id1)
+            .expect("Expected client1 in WorldState");
+
+        assert!(
+            (client1_data.position.x - client1_position.x).abs() < 0.001,
+            "Client1 position.x mismatch: expected {}, got {}",
+            client1_position.x,
+            client1_data.position.x
+        );
+        assert!(
+            (client1_data.position.y - client1_position.y).abs() < 0.001,
+            "Client1 position.y mismatch"
+        );
+        assert!(
+            (client1_data.position.z - client1_position.z).abs() < 0.001,
+            "Client1 position.z mismatch"
+        );
+        assert!(
+            (client1_data.rotation_yaw - client1_rotation).abs() < 0.001,
+            "Client1 rotation_yaw mismatch: expected {}, got {}",
+            client1_rotation,
+            client1_data.rotation_yaw
+        );
+    }
+
+    // Client 2 moves to position (-3.0, 0.0, 8.0) with rotation 2.5
+    let client2_position = Vec3::new(-3.0, 0.0, 8.0);
+    let client2_rotation = 2.5;
+    let update2 = ClientPacket::PlayerUpdate(PlayerState::with_transform(
+        id2,
+        client2_position,
+        client2_rotation,
+    ));
+    let bytes = serialize_client_packet(&update2).expect("Failed to serialize");
+    client2
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+    // Drain client2's WorldState response
+    let _ = receive_packets(&client2, 1);
+
+    // Drain any pending WorldState that client1 might have received from client2's update
+    let _ = receive_packets(&client1, 2);
+
+    // Client 1 sends an update to trigger WorldState broadcast
+    let update1_trigger = ClientPacket::PlayerUpdate(PlayerState::with_transform(
+        id1,
+        client1_position,
+        client1_rotation,
+    ));
+    let bytes = serialize_client_packet(&update1_trigger).expect("Failed to serialize");
+    client1
+        .send_to(&bytes, server.addr())
+        .expect("Failed to send");
+
+    // Client 1 receives WorldState and verifies Client 2's position
+    let packets = receive_packets(&client1, 2);
+    let world_state = packets
+        .iter()
+        .rev()
+        .find(|p| matches!(p, ServerPacket::WorldState { .. }))
+        .expect("Expected WorldState packet for client1");
+
+    if let ServerPacket::WorldState { players } = world_state {
+        let client2_data = players
+            .iter()
+            .find(|p| p.player_id == id2)
+            .expect("Expected client2 in WorldState");
+
+        assert!(
+            (client2_data.position.x - client2_position.x).abs() < 0.001,
+            "Client2 position.x mismatch: expected {}, got {}",
+            client2_position.x,
+            client2_data.position.x
+        );
+        assert!(
+            (client2_data.position.y - client2_position.y).abs() < 0.001,
+            "Client2 position.y mismatch"
+        );
+        assert!(
+            (client2_data.position.z - client2_position.z).abs() < 0.001,
+            "Client2 position.z mismatch"
+        );
+        assert!(
+            (client2_data.rotation_yaw - client2_rotation).abs() < 0.001,
+            "Client2 rotation_yaw mismatch: expected {}, got {}",
+            client2_rotation,
+            client2_data.rotation_yaw
+        );
+    }
+}
