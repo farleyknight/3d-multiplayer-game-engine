@@ -5,8 +5,8 @@
 - [x] Create basic project structure with lib.rs and bin stubs → `cargo build` compiles both `client` and `server` binaries
 
 ## Core Infrastructure
-- [ ] Implement shared types (PlayerState, packet types, constants) → `cargo test` passes for serialization round-trip tests
-- [ ] Implement network packet serialization/deserialization → Unit tests verify encode/decode of all packet types
+- [x] Implement shared types (PlayerState, packet types, constants) → `cargo test` passes for serialization round-trip tests
+- [x] Implement network packet serialization/deserialization → Unit tests verify encode/decode of all packet types → Note: needed glam "serde" feature
 
 ## Server Implementation
 - [ ] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
