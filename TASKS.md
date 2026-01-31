@@ -69,8 +69,8 @@
 - [x] Add: Texture loading system for PNG files → Load textures from `textures/default-textures/textures/blocks/` directory
 - [x] Add: UV mapping for block faces → Each face of a cube can have a texture applied
 - [x] Add: Textured block rendering → Blocks render with Minecraft textures instead of solid colors
-- [ ] Add: Basic directional lighting → Scene has a sun-like light source casting basic shadows/shading
-- [ ] Add: Ambient lighting → Objects have base illumination even in shadow
+- [x] Add: Basic directional lighting → Scene has a sun-like light source casting basic shadows/shading → Note: Added LightUniforms struct with sun_direction, sun_color, and ambient_strength; normals added to all vertices (24 per cube for proper per-face shading)
+- [x] Add: Ambient lighting → Objects have base illumination even in shadow → Note: Implemented together with directional lighting via ambient_strength uniform (30% ambient)
 
 ## 3D World - Minecraft-like Environment
 - [ ] Add: Block type system → Define block types (grass, dirt, stone, cobblestone, wood) with associated textures

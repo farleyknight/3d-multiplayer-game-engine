@@ -469,12 +469,41 @@ pub mod render {
         }
     }
 
-    /// Vertex with position and color for the cube mesh
+    /// Light uniforms for directional (sun) lighting
+    /// Layout matches WGSL struct with proper alignment (vec3 followed by padding)
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+    pub struct LightUniforms {
+        /// Direction the sun is pointing (towards the scene)
+        pub sun_direction: [f32; 3],
+        /// Padding to align sun_color to 16 bytes
+        pub _padding1: f32,
+        /// Color/intensity of the sun light
+        pub sun_color: [f32; 3],
+        /// Ambient light strength (0.0 - 1.0)
+        pub ambient_strength: f32,
+    }
+
+    impl Default for LightUniforms {
+        fn default() -> Self {
+            // Sun direction pointing down and slightly to the side (normalized)
+            let dir = Vec3::new(-0.5, -1.0, -0.3).normalize();
+            Self {
+                sun_direction: [dir.x, dir.y, dir.z],
+                _padding1: 0.0,
+                sun_color: [1.0, 1.0, 0.95], // Slightly warm white
+                ambient_strength: 0.3, // 30% ambient light
+            }
+        }
+    }
+
+    /// Vertex with position, color, and normal for the cube mesh
     #[repr(C)]
     #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
     pub struct Vertex {
         pub position: [f32; 3],
         pub color: [f32; 3],
+        pub normal: [f32; 3],
     }
 
     impl Vertex {
@@ -494,12 +523,17 @@ pub mod render {
                         shader_location: 1,
                         format: VertexFormat::Float32x3,
                     },
+                    VertexAttribute {
+                        offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+                        shader_location: 2,
+                        format: VertexFormat::Float32x3,
+                    },
                 ],
             }
         }
     }
 
-    /// Vertex with position, UV coordinates, and color for textured rendering.
+    /// Vertex with position, UV coordinates, color, and normal for textured rendering.
     /// Each face of a cube needs unique vertices for proper UV mapping (24 vertices per cube).
     #[repr(C)]
     #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -507,6 +541,7 @@ pub mod render {
         pub position: [f32; 3],
         pub uv: [f32; 2],
         pub color: [f32; 3],
+        pub normal: [f32; 3],
     }
 
     impl TexturedVertex {
@@ -534,50 +569,80 @@ pub mod render {
                         shader_location: 2,
                         format: VertexFormat::Float32x3,
                     },
+                    // normal: shader_location 3
+                    VertexAttribute {
+                        offset: (std::mem::size_of::<[f32; 3]>() + std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 3]>()) as wgpu::BufferAddress,
+                        shader_location: 3,
+                        format: VertexFormat::Float32x3,
+                    },
                 ],
             }
         }
     }
 
-    /// Cube vertices with positions and colors (8 vertices, each corner a different color)
+    /// Cube vertices with positions, colors, and normals (24 vertices, 4 per face)
     pub const CUBE_VERTICES: &[Vertex] = &[
-        // Front face (z = 0.5)
-        Vertex { position: [-0.5, -0.5,  0.5], color: [1.0, 0.0, 0.0] }, // 0: red
-        Vertex { position: [ 0.5, -0.5,  0.5], color: [0.0, 1.0, 0.0] }, // 1: green
-        Vertex { position: [ 0.5,  0.5,  0.5], color: [0.0, 0.0, 1.0] }, // 2: blue
-        Vertex { position: [-0.5,  0.5,  0.5], color: [1.0, 1.0, 0.0] }, // 3: yellow
-        // Back face (z = -0.5)
-        Vertex { position: [-0.5, -0.5, -0.5], color: [1.0, 0.0, 1.0] }, // 4: magenta
-        Vertex { position: [ 0.5, -0.5, -0.5], color: [0.0, 1.0, 1.0] }, // 5: cyan
-        Vertex { position: [ 0.5,  0.5, -0.5], color: [1.0, 1.0, 1.0] }, // 6: white
-        Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.5, 0.5] }, // 7: gray
+        // Front face (+Z)
+        Vertex { position: [-0.5, -0.5,  0.5], color: [1.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0] },
+        Vertex { position: [ 0.5, -0.5,  0.5], color: [0.0, 1.0, 0.0], normal: [0.0, 0.0, 1.0] },
+        Vertex { position: [ 0.5,  0.5,  0.5], color: [0.0, 0.0, 1.0], normal: [0.0, 0.0, 1.0] },
+        Vertex { position: [-0.5,  0.5,  0.5], color: [1.0, 1.0, 0.0], normal: [0.0, 0.0, 1.0] },
+        // Back face (-Z)
+        Vertex { position: [ 0.5, -0.5, -0.5], color: [0.0, 1.0, 1.0], normal: [0.0, 0.0, -1.0] },
+        Vertex { position: [-0.5, -0.5, -0.5], color: [1.0, 0.0, 1.0], normal: [0.0, 0.0, -1.0] },
+        Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.5, 0.5], normal: [0.0, 0.0, -1.0] },
+        Vertex { position: [ 0.5,  0.5, -0.5], color: [1.0, 1.0, 1.0], normal: [0.0, 0.0, -1.0] },
+        // Right face (+X)
+        Vertex { position: [ 0.5, -0.5,  0.5], color: [0.0, 1.0, 0.0], normal: [1.0, 0.0, 0.0] },
+        Vertex { position: [ 0.5, -0.5, -0.5], color: [0.0, 1.0, 1.0], normal: [1.0, 0.0, 0.0] },
+        Vertex { position: [ 0.5,  0.5, -0.5], color: [1.0, 1.0, 1.0], normal: [1.0, 0.0, 0.0] },
+        Vertex { position: [ 0.5,  0.5,  0.5], color: [0.0, 0.0, 1.0], normal: [1.0, 0.0, 0.0] },
+        // Left face (-X)
+        Vertex { position: [-0.5, -0.5, -0.5], color: [1.0, 0.0, 1.0], normal: [-1.0, 0.0, 0.0] },
+        Vertex { position: [-0.5, -0.5,  0.5], color: [1.0, 0.0, 0.0], normal: [-1.0, 0.0, 0.0] },
+        Vertex { position: [-0.5,  0.5,  0.5], color: [1.0, 1.0, 0.0], normal: [-1.0, 0.0, 0.0] },
+        Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.5, 0.5], normal: [-1.0, 0.0, 0.0] },
+        // Top face (+Y)
+        Vertex { position: [-0.5,  0.5,  0.5], color: [1.0, 1.0, 0.0], normal: [0.0, 1.0, 0.0] },
+        Vertex { position: [ 0.5,  0.5,  0.5], color: [0.0, 0.0, 1.0], normal: [0.0, 1.0, 0.0] },
+        Vertex { position: [ 0.5,  0.5, -0.5], color: [1.0, 1.0, 1.0], normal: [0.0, 1.0, 0.0] },
+        Vertex { position: [-0.5,  0.5, -0.5], color: [0.5, 0.5, 0.5], normal: [0.0, 1.0, 0.0] },
+        // Bottom face (-Y)
+        Vertex { position: [-0.5, -0.5, -0.5], color: [1.0, 0.0, 1.0], normal: [0.0, -1.0, 0.0] },
+        Vertex { position: [ 0.5, -0.5, -0.5], color: [0.0, 1.0, 1.0], normal: [0.0, -1.0, 0.0] },
+        Vertex { position: [ 0.5, -0.5,  0.5], color: [0.0, 1.0, 0.0], normal: [0.0, -1.0, 0.0] },
+        Vertex { position: [-0.5, -0.5,  0.5], color: [1.0, 0.0, 0.0], normal: [0.0, -1.0, 0.0] },
     ];
 
     /// Cube indices for indexed drawing (12 triangles = 36 indices)
+    /// Using 24-vertex layout with 4 vertices per face
     pub const CUBE_INDICES: &[u16] = &[
-        // Front face
+        // Front face (vertices 0-3)
         0, 1, 2, 2, 3, 0,
-        // Right face
-        1, 5, 6, 6, 2, 1,
-        // Back face
-        5, 4, 7, 7, 6, 5,
-        // Left face
-        4, 0, 3, 3, 7, 4,
-        // Top face
-        3, 2, 6, 6, 7, 3,
-        // Bottom face
-        4, 5, 1, 1, 0, 4,
+        // Back face (vertices 4-7)
+        4, 5, 6, 6, 7, 4,
+        // Right face (vertices 8-11)
+        8, 9, 10, 10, 11, 8,
+        // Left face (vertices 12-15)
+        12, 13, 14, 14, 15, 12,
+        // Top face (vertices 16-19)
+        16, 17, 18, 18, 19, 16,
+        // Bottom face (vertices 20-23)
+        20, 21, 22, 22, 23, 20,
     ];
 
     /// Dark gray color for the ground plane (#404040 = 0.251, 0.251, 0.251)
     const GROUND_GRAY: [f32; 3] = [0.251, 0.251, 0.251];
 
+    /// Upward normal for ground plane
+    const UP_NORMAL: [f32; 3] = [0.0, 1.0, 0.0];
+
     /// Ground plane vertices (50x50 quad at y=0, centered at origin)
     pub const GROUND_VERTICES: &[Vertex] = &[
-        Vertex { position: [-25.0, 0.0, -25.0], color: GROUND_GRAY }, // 0: back-left
-        Vertex { position: [ 25.0, 0.0, -25.0], color: GROUND_GRAY }, // 1: back-right
-        Vertex { position: [ 25.0, 0.0,  25.0], color: GROUND_GRAY }, // 2: front-right
-        Vertex { position: [-25.0, 0.0,  25.0], color: GROUND_GRAY }, // 3: front-left
+        Vertex { position: [-25.0, 0.0, -25.0], color: GROUND_GRAY, normal: UP_NORMAL }, // 0: back-left
+        Vertex { position: [ 25.0, 0.0, -25.0], color: GROUND_GRAY, normal: UP_NORMAL }, // 1: back-right
+        Vertex { position: [ 25.0, 0.0,  25.0], color: GROUND_GRAY, normal: UP_NORMAL }, // 2: front-right
+        Vertex { position: [-25.0, 0.0,  25.0], color: GROUND_GRAY, normal: UP_NORMAL }, // 3: front-left
     ];
 
     /// Ground plane indices (2 triangles = 6 indices)
@@ -677,50 +742,73 @@ pub mod render {
         StaticObject { position: (15.0, 1.5, 15.0), size: (0.5, 3.0, 6.0), color: BROWN },
     ];
 
-    /// Generate cube vertices at a given offset with a given size and color
-    /// Size is (width, height, depth) and offset is the center position
+    /// Generate cube vertices at a given offset with a given size and color.
+    /// Returns 24 vertices (4 per face) with proper normals for lighting.
+    /// Size is (width, height, depth) and offset is the center position.
     fn create_cube_vertices(
         size: (f32, f32, f32),
         offset: (f32, f32, f32),
         color: [f32; 3],
-    ) -> [Vertex; 8] {
+    ) -> [Vertex; 24] {
         let (w, h, d) = (size.0 / 2.0, size.1 / 2.0, size.2 / 2.0);
         let (ox, oy, oz) = offset;
         [
-            // Front face (z = +d)
-            Vertex { position: [ox - w, oy - h, oz + d], color },
-            Vertex { position: [ox + w, oy - h, oz + d], color },
-            Vertex { position: [ox + w, oy + h, oz + d], color },
-            Vertex { position: [ox - w, oy + h, oz + d], color },
-            // Back face (z = -d)
-            Vertex { position: [ox - w, oy - h, oz - d], color },
-            Vertex { position: [ox + w, oy - h, oz - d], color },
-            Vertex { position: [ox + w, oy + h, oz - d], color },
-            Vertex { position: [ox - w, oy + h, oz - d], color },
+            // Front face (+Z) - vertices 0-3
+            Vertex { position: [ox - w, oy - h, oz + d], color, normal: [0.0, 0.0, 1.0] },
+            Vertex { position: [ox + w, oy - h, oz + d], color, normal: [0.0, 0.0, 1.0] },
+            Vertex { position: [ox + w, oy + h, oz + d], color, normal: [0.0, 0.0, 1.0] },
+            Vertex { position: [ox - w, oy + h, oz + d], color, normal: [0.0, 0.0, 1.0] },
+            // Back face (-Z) - vertices 4-7
+            Vertex { position: [ox + w, oy - h, oz - d], color, normal: [0.0, 0.0, -1.0] },
+            Vertex { position: [ox - w, oy - h, oz - d], color, normal: [0.0, 0.0, -1.0] },
+            Vertex { position: [ox - w, oy + h, oz - d], color, normal: [0.0, 0.0, -1.0] },
+            Vertex { position: [ox + w, oy + h, oz - d], color, normal: [0.0, 0.0, -1.0] },
+            // Right face (+X) - vertices 8-11
+            Vertex { position: [ox + w, oy - h, oz + d], color, normal: [1.0, 0.0, 0.0] },
+            Vertex { position: [ox + w, oy - h, oz - d], color, normal: [1.0, 0.0, 0.0] },
+            Vertex { position: [ox + w, oy + h, oz - d], color, normal: [1.0, 0.0, 0.0] },
+            Vertex { position: [ox + w, oy + h, oz + d], color, normal: [1.0, 0.0, 0.0] },
+            // Left face (-X) - vertices 12-15
+            Vertex { position: [ox - w, oy - h, oz - d], color, normal: [-1.0, 0.0, 0.0] },
+            Vertex { position: [ox - w, oy - h, oz + d], color, normal: [-1.0, 0.0, 0.0] },
+            Vertex { position: [ox - w, oy + h, oz + d], color, normal: [-1.0, 0.0, 0.0] },
+            Vertex { position: [ox - w, oy + h, oz - d], color, normal: [-1.0, 0.0, 0.0] },
+            // Top face (+Y) - vertices 16-19
+            Vertex { position: [ox - w, oy + h, oz + d], color, normal: [0.0, 1.0, 0.0] },
+            Vertex { position: [ox + w, oy + h, oz + d], color, normal: [0.0, 1.0, 0.0] },
+            Vertex { position: [ox + w, oy + h, oz - d], color, normal: [0.0, 1.0, 0.0] },
+            Vertex { position: [ox - w, oy + h, oz - d], color, normal: [0.0, 1.0, 0.0] },
+            // Bottom face (-Y) - vertices 20-23
+            Vertex { position: [ox - w, oy - h, oz - d], color, normal: [0.0, -1.0, 0.0] },
+            Vertex { position: [ox + w, oy - h, oz - d], color, normal: [0.0, -1.0, 0.0] },
+            Vertex { position: [ox + w, oy - h, oz + d], color, normal: [0.0, -1.0, 0.0] },
+            Vertex { position: [ox - w, oy - h, oz + d], color, normal: [0.0, -1.0, 0.0] },
         ]
     }
 
-    /// Generate indices for a cube part, offset by the starting vertex index
+    /// Generate indices for a cube part, offset by the starting vertex index.
+    /// Uses 24-vertex layout with 4 vertices per face.
     const fn create_cube_indices(start: u16) -> [u16; 36] {
         [
-            // Front face
-            start, start + 1, start + 2, start + 2, start + 3, start,
-            // Right face
-            start + 1, start + 5, start + 6, start + 6, start + 2, start + 1,
-            // Back face
-            start + 5, start + 4, start + 7, start + 7, start + 6, start + 5,
-            // Left face
-            start + 4, start, start + 3, start + 3, start + 7, start + 4,
-            // Top face
-            start + 3, start + 2, start + 6, start + 6, start + 7, start + 3,
-            // Bottom face
-            start + 4, start + 5, start + 1, start + 1, start, start + 4,
+            // Front face (vertices 0-3)
+            start + 0, start + 1, start + 2, start + 2, start + 3, start + 0,
+            // Back face (vertices 4-7)
+            start + 4, start + 5, start + 6, start + 6, start + 7, start + 4,
+            // Right face (vertices 8-11)
+            start + 8, start + 9, start + 10, start + 10, start + 11, start + 8,
+            // Left face (vertices 12-15)
+            start + 12, start + 13, start + 14, start + 14, start + 15, start + 12,
+            // Top face (vertices 16-19)
+            start + 16, start + 17, start + 18, start + 18, start + 19, start + 16,
+            // Bottom face (vertices 20-23)
+            start + 20, start + 21, start + 22, start + 22, start + 23, start + 20,
         ]
     }
 
     /// Create 24 vertices for a textured cube (4 vertices per face, 6 faces).
     /// Unlike shared-corner cubes, textured cubes need unique vertices per face for proper UV mapping.
     /// UV coordinates map the full texture (0,0 to 1,1) to each face.
+    /// Includes normals for directional lighting.
     pub fn create_textured_cube_vertices(
         size: (f32, f32, f32),
         offset: (f32, f32, f32),
@@ -731,40 +819,40 @@ pub mod render {
 
         [
             // Front face (+Z) - vertices 0-3
-            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 1.0], color, normal: [0.0, 0.0, 1.0] },
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 1.0], color, normal: [0.0, 0.0, 1.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 0.0], color, normal: [0.0, 0.0, 1.0] },
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 0.0], color, normal: [0.0, 0.0, 1.0] },
 
             // Back face (-Z) - vertices 4-7
-            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [0.0, 0.0, -1.0] },
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [0.0, 0.0, -1.0] },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [0.0, 0.0, -1.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [0.0, 0.0, -1.0] },
 
             // Right face (+X) - vertices 8-11
-            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [0.0, 1.0], color, normal: [1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [0.0, 0.0], color, normal: [1.0, 0.0, 0.0] },
 
             // Left face (-X) - vertices 12-15
-            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [-1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [1.0, 1.0], color, normal: [-1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [1.0, 0.0], color, normal: [-1.0, 0.0, 0.0] },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [-1.0, 0.0, 0.0] },
 
             // Top face (+Y) - vertices 16-19
-            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy + h, oz + d], uv: [0.0, 1.0], color, normal: [0.0, 1.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz + d], uv: [1.0, 1.0], color, normal: [0.0, 1.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy + h, oz - d], uv: [1.0, 0.0], color, normal: [0.0, 1.0, 0.0] },
+            TexturedVertex { position: [ox - w, oy + h, oz - d], uv: [0.0, 0.0], color, normal: [0.0, 1.0, 0.0] },
 
             // Bottom face (-Y) - vertices 20-23
-            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color },
-            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 0.0], color },
-            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 0.0], color },
+            TexturedVertex { position: [ox - w, oy - h, oz - d], uv: [0.0, 1.0], color, normal: [0.0, -1.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy - h, oz - d], uv: [1.0, 1.0], color, normal: [0.0, -1.0, 0.0] },
+            TexturedVertex { position: [ox + w, oy - h, oz + d], uv: [1.0, 0.0], color, normal: [0.0, -1.0, 0.0] },
+            TexturedVertex { position: [ox - w, oy - h, oz + d], uv: [0.0, 0.0], color, normal: [0.0, -1.0, 0.0] },
         ]
     }
 
@@ -791,14 +879,14 @@ pub mod render {
     /// Build mesh for all static environment objects
     /// Returns (vertices, indices) for all static objects combined
     pub fn build_static_objects_mesh() -> (Vec<Vertex>, Vec<u16>) {
-        let mut vertices = Vec::with_capacity(STATIC_OBJECTS.len() * 8);
+        let mut vertices = Vec::with_capacity(STATIC_OBJECTS.len() * 24);
         let mut indices = Vec::with_capacity(STATIC_OBJECTS.len() * 36);
 
         for (i, obj) in STATIC_OBJECTS.iter().enumerate() {
             let cube_verts = create_cube_vertices(obj.size, obj.position, obj.color);
             vertices.extend_from_slice(&cube_verts);
 
-            let cube_indices = create_cube_indices((i * 8) as u16);
+            let cube_indices = create_cube_indices((i * 24) as u16);
             indices.extend_from_slice(&cube_indices);
         }
 
@@ -826,7 +914,7 @@ pub mod render {
     /// Build humanoid vertices from body parts
     /// Returns (vertices, indices) for the complete humanoid mesh
     pub fn build_humanoid_mesh(color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
-        let mut vertices = Vec::with_capacity(48); // 6 parts * 8 vertices
+        let mut vertices = Vec::with_capacity(144); // 6 parts * 24 vertices
         let mut indices = Vec::with_capacity(216); // 6 parts * 36 indices
 
         // Head: 0.4×0.4×0.4 at y=1.6 (center at 1.6, so bottom at 1.4, top at 1.8)
@@ -853,9 +941,9 @@ pub mod render {
         let right_leg = create_cube_vertices((0.2, 0.8, 0.2), (0.15, 0.4, 0.0), color);
         vertices.extend_from_slice(&right_leg);
 
-        // Add indices for each part (6 parts, 8 vertices each)
+        // Add indices for each part (6 parts, 24 vertices each)
         for i in 0..6 {
-            let part_indices = create_cube_indices(i * 8);
+            let part_indices = create_cube_indices(i * 24);
             indices.extend_from_slice(&part_indices);
         }
 
@@ -887,6 +975,7 @@ pub mod render {
         static_objects_index_buffer: Buffer,
         static_objects_num_indices: u32,
         uniform_buffer: Buffer,
+        light_uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
     }
@@ -923,6 +1012,7 @@ pub mod render {
         textured_bind_group: BindGroup,
         textured_pipeline: RenderPipeline,
         uniform_buffer: Buffer,
+        light_uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
     }
@@ -1055,6 +1145,14 @@ pub mod render {
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
 
+            // Create light uniform buffer with default directional light
+            let light_uniforms = LightUniforms::default();
+            let light_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Light Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[light_uniforms]),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+
             // Load block texture for textured rendering
             // Try to load cobblestone texture, fall back to creating a default texture if not available
             let texture_path = std::path::Path::new("textures/default-textures/textures/blocks/cobblestone.png");
@@ -1114,32 +1212,50 @@ pub mod render {
             let block_texture_view = block_texture.create_view(&wgpu::TextureViewDescriptor::default());
             let block_sampler = crate::texture::create_pixel_art_sampler(&device);
 
-            // Create bind group layout
+            // Create bind group layout (MVP uniform + light uniform)
             let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("MVP Bind Group Layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
             // Create bind group
             let bind_group = device.create_bind_group(&BindGroupDescriptor {
                 label: Some("MVP Bind Group"),
                 layout: &bind_group_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: light_uniform_buffer.as_entire_binding(),
+                    },
+                ],
             });
 
-            // Create textured bind group layout (MVP uniform + texture + sampler)
+            // Create textured bind group layout (MVP uniform + texture + sampler + light uniform)
             let textured_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Textured Bind Group Layout"),
                 entries: &[
@@ -1169,6 +1285,16 @@ pub mod render {
                         ty: BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -1188,6 +1314,10 @@ pub mod render {
                     BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&block_sampler),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: light_uniform_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -1301,6 +1431,7 @@ pub mod render {
                 textured_bind_group,
                 textured_pipeline,
                 uniform_buffer,
+                light_uniform_buffer,
                 bind_group,
                 pipeline,
             })
@@ -1765,29 +1896,55 @@ pub mod render {
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
 
-            // Create bind group layout
+            // Create light uniform buffer with default directional light
+            let light_uniforms = LightUniforms::default();
+            let light_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Light Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[light_uniforms]),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+
+            // Create bind group layout (MVP uniform + light uniform)
             let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("MVP Bind Group Layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
             // Create bind group
             let bind_group = device.create_bind_group(&BindGroupDescriptor {
                 label: Some("MVP Bind Group"),
                 layout: &bind_group_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: light_uniform_buffer.as_entire_binding(),
+                    },
+                ],
             });
 
             // Load shader
@@ -1856,6 +2013,7 @@ pub mod render {
                 static_objects_index_buffer,
                 static_objects_num_indices,
                 uniform_buffer,
+                light_uniform_buffer,
                 bind_group,
                 pipeline,
             }
@@ -2296,8 +2454,8 @@ mod tests {
     fn test_cube_vertex_count() {
         use crate::render::CUBE_VERTICES;
 
-        // 8 vertices for a cube (one per corner)
-        assert_eq!(CUBE_VERTICES.len(), 8);
+        // 24 vertices for a cube (4 per face for proper normals)
+        assert_eq!(CUBE_VERTICES.len(), 24);
     }
 
     #[test]
@@ -2327,8 +2485,8 @@ mod tests {
     fn test_vertex_struct_size() {
         use crate::render::Vertex;
 
-        // Vertex should be 6 floats (3 position + 3 color) = 24 bytes
-        assert_eq!(std::mem::size_of::<Vertex>(), 24);
+        // Vertex should be 9 floats (3 position + 3 color + 3 normal) = 36 bytes
+        assert_eq!(std::mem::size_of::<Vertex>(), 36);
     }
 
     #[test]
@@ -2393,8 +2551,8 @@ mod tests {
         use crate::render::build_humanoid_mesh;
 
         let (vertices, _) = build_humanoid_mesh([0.0, 0.0, 1.0]);
-        // 6 body parts * 8 vertices each = 48 vertices
-        assert_eq!(vertices.len(), 48);
+        // 6 body parts * 24 vertices each (4 per face for proper normals) = 144 vertices
+        assert_eq!(vertices.len(), 144);
     }
 
     #[test]
@@ -2478,8 +2636,8 @@ mod tests {
         use crate::render::build_static_objects_mesh;
 
         let (vertices, _) = build_static_objects_mesh();
-        // 8 objects * 8 vertices each = 64 vertices
-        assert_eq!(vertices.len(), 64);
+        // 8 objects * 24 vertices each (4 per face for proper normals) = 192 vertices
+        assert_eq!(vertices.len(), 192);
     }
 
     #[test]
@@ -2927,8 +3085,8 @@ mod tests {
     fn test_textured_vertex_struct_size() {
         use crate::render::TexturedVertex;
 
-        // TexturedVertex should be 8 floats (3 position + 2 uv + 3 color) = 32 bytes
-        assert_eq!(std::mem::size_of::<TexturedVertex>(), 32);
+        // TexturedVertex should be 11 floats (3 position + 2 uv + 3 color + 3 normal) = 44 bytes
+        assert_eq!(std::mem::size_of::<TexturedVertex>(), 44);
     }
 
     #[test]
@@ -2940,12 +3098,14 @@ mod tests {
             position: [1.0, 2.0, 3.0],
             uv: [0.5, 0.5],
             color: [1.0, 0.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
         };
 
         // Verify fields are accessible
         assert_eq!(vertex.position, [1.0, 2.0, 3.0]);
         assert_eq!(vertex.uv, [0.5, 0.5]);
         assert_eq!(vertex.color, [1.0, 0.0, 0.0]);
+        assert_eq!(vertex.normal, [0.0, 1.0, 0.0]);
     }
 
     #[test]
