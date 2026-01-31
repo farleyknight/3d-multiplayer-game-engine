@@ -400,17 +400,17 @@ pub mod render {
     const fn create_cube_indices(start: u16) -> [u16; 36] {
         [
             // Front face
-            start + 0, start + 1, start + 2, start + 2, start + 3, start + 0,
+            start, start + 1, start + 2, start + 2, start + 3, start,
             // Right face
             start + 1, start + 5, start + 6, start + 6, start + 2, start + 1,
             // Back face
             start + 5, start + 4, start + 7, start + 7, start + 6, start + 5,
             // Left face
-            start + 4, start + 0, start + 3, start + 3, start + 7, start + 4,
+            start + 4, start, start + 3, start + 3, start + 7, start + 4,
             // Top face
             start + 3, start + 2, start + 6, start + 6, start + 7, start + 3,
             // Bottom face
-            start + 4, start + 5, start + 1, start + 1, start + 0, start + 4,
+            start + 4, start + 5, start + 1, start + 1, start, start + 4,
         ]
     }
 
