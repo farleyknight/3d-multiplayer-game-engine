@@ -93,8 +93,8 @@
 - [x] Add: Document input handling architecture in docs/ARCHITECTURE.md → Section explains how WASD/SpaceBar inputs are captured and translated to movement/jump actions
 
 ## Input Simulation Infrastructure
-- [ ] Add: Create InputSimulator module for integration tests → New module in src/lib.rs or src/input.rs that can simulate WASD+SpaceBar input events
-- [ ] Add: InputSimulator can queue key press/release events → `InputSimulator::press_key(KeyCode::W)` and `release_key()` methods work
+- [x] Add: Create InputSimulator module for integration tests → New module in src/lib.rs or src/input.rs that can simulate WASD+SpaceBar input events → Note: Added to test_helpers.rs with KeyCode enum, InputEvent struct, and InputSimulator with press_key/release_key/get_movement_state methods
+- [x] Add: InputSimulator can queue key press/release events → `InputSimulator::press_key(KeyCode::W)` and `release_key()` methods work
 - [ ] Add: InputSimulator integrates with game loop for state updates → Simulated inputs trigger actual movement/physics code paths instead of direct position modification
 
 ## Integration Tests with Input Simulation

@@ -3,7 +3,9 @@
 //! This module provides utilities for testing, including screenshot capture
 //! for visual regression testing and video recording for gameplay capture.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "test-helpers")]
+use std::path::PathBuf;
 use wgpu::{BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Queue, Texture};
 
 /// Captures a wgpu texture and saves it as a PNG file.
@@ -482,6 +484,131 @@ fn extract_nal_units(data: &[u8]) -> Vec<Vec<u8>> {
     nals
 }
 
+/// Simplified key codes for input simulation in tests.
+/// This is a subset of winit's KeyCode, covering only the keys needed for movement/jumping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyCode {
+    /// W key - forward movement
+    W,
+    /// A key - left movement
+    A,
+    /// S key - backward movement
+    S,
+    /// D key - right movement
+    D,
+    /// Space key - jump
+    Space,
+}
+
+/// Represents a single input event (key press or release).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputEvent {
+    /// The key that was pressed or released
+    pub key: KeyCode,
+    /// True if the key was pressed, false if released
+    pub pressed: bool,
+}
+
+impl InputEvent {
+    /// Creates a new input event.
+    pub fn new(key: KeyCode, pressed: bool) -> Self {
+        Self { key, pressed }
+    }
+}
+
+/// Simulates keyboard input for integration tests.
+///
+/// This struct allows tests to queue and process simulated key press/release events
+/// for WASD movement and SpaceBar jumping, without needing an actual window or input device.
+///
+/// # Example
+/// ```ignore
+/// use game_engine::test_helpers::{InputSimulator, KeyCode};
+///
+/// let mut input = InputSimulator::new();
+///
+/// // Press W to move forward
+/// input.press_key(KeyCode::W);
+/// assert!(input.is_key_pressed(KeyCode::W));
+///
+/// // Release W
+/// input.release_key(KeyCode::W);
+/// assert!(!input.is_key_pressed(KeyCode::W));
+/// ```
+pub struct InputSimulator {
+    /// Queue of input events in order
+    event_queue: std::collections::VecDeque<InputEvent>,
+    /// Current state of each key (true = pressed)
+    key_states: std::collections::HashMap<KeyCode, bool>,
+}
+
+impl InputSimulator {
+    /// Creates a new InputSimulator with no keys pressed.
+    pub fn new() -> Self {
+        Self {
+            event_queue: std::collections::VecDeque::new(),
+            key_states: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Simulates pressing a key.
+    ///
+    /// This adds a press event to the queue and updates the key state.
+    pub fn press_key(&mut self, key: KeyCode) {
+        self.event_queue.push_back(InputEvent::new(key, true));
+        self.key_states.insert(key, true);
+    }
+
+    /// Simulates releasing a key.
+    ///
+    /// This adds a release event to the queue and updates the key state.
+    pub fn release_key(&mut self, key: KeyCode) {
+        self.event_queue.push_back(InputEvent::new(key, false));
+        self.key_states.insert(key, false);
+    }
+
+    /// Checks if a key is currently pressed.
+    pub fn is_key_pressed(&self, key: KeyCode) -> bool {
+        *self.key_states.get(&key).unwrap_or(&false)
+    }
+
+    /// Returns the current state of all movement keys as boolean flags.
+    ///
+    /// Returns (w_pressed, a_pressed, s_pressed, d_pressed, space_pressed)
+    /// matching the pattern used in client.rs for movement processing.
+    pub fn get_movement_state(&self) -> (bool, bool, bool, bool, bool) {
+        (
+            self.is_key_pressed(KeyCode::W),
+            self.is_key_pressed(KeyCode::A),
+            self.is_key_pressed(KeyCode::S),
+            self.is_key_pressed(KeyCode::D),
+            self.is_key_pressed(KeyCode::Space),
+        )
+    }
+
+    /// Pops and returns the next event from the queue, if any.
+    pub fn pop_event(&mut self) -> Option<InputEvent> {
+        self.event_queue.pop_front()
+    }
+
+    /// Returns the number of events in the queue.
+    pub fn event_count(&self) -> usize {
+        self.event_queue.len()
+    }
+
+    /// Clears all key states and the event queue.
+    pub fn clear(&mut self) {
+        self.event_queue.clear();
+        self.key_states.clear();
+    }
+}
+
+impl Default for InputSimulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,5 +814,74 @@ mod tests {
 
         // Clean up - remove test file
         std::fs::remove_file(output_path).ok();
+    }
+
+    #[test]
+    fn test_input_simulator_basic_operations() {
+        let mut input = InputSimulator::new();
+
+        // Initially no keys pressed
+        assert!(!input.is_key_pressed(KeyCode::W));
+        assert!(!input.is_key_pressed(KeyCode::Space));
+        assert_eq!(input.event_count(), 0);
+
+        // Press W
+        input.press_key(KeyCode::W);
+        assert!(input.is_key_pressed(KeyCode::W));
+        assert_eq!(input.event_count(), 1);
+
+        // Check event
+        let event = input.pop_event().unwrap();
+        assert_eq!(event.key, KeyCode::W);
+        assert!(event.pressed);
+        assert_eq!(input.event_count(), 0);
+
+        // Release W
+        input.release_key(KeyCode::W);
+        assert!(!input.is_key_pressed(KeyCode::W));
+        assert_eq!(input.event_count(), 1);
+    }
+
+    #[test]
+    fn test_input_simulator_get_movement_state() {
+        let mut input = InputSimulator::new();
+
+        // Initial state - all false
+        let state = input.get_movement_state();
+        assert_eq!(state, (false, false, false, false, false));
+
+        // Press WASD and Space
+        input.press_key(KeyCode::W);
+        input.press_key(KeyCode::A);
+        input.press_key(KeyCode::S);
+        input.press_key(KeyCode::D);
+        input.press_key(KeyCode::Space);
+
+        let state = input.get_movement_state();
+        assert_eq!(state, (true, true, true, true, true));
+
+        // Release W and Space
+        input.release_key(KeyCode::W);
+        input.release_key(KeyCode::Space);
+
+        let state = input.get_movement_state();
+        assert_eq!(state, (false, true, true, true, false));
+    }
+
+    #[test]
+    fn test_input_simulator_clear() {
+        let mut input = InputSimulator::new();
+
+        input.press_key(KeyCode::W);
+        input.press_key(KeyCode::Space);
+        assert!(input.is_key_pressed(KeyCode::W));
+        assert!(input.is_key_pressed(KeyCode::Space));
+        assert_eq!(input.event_count(), 2);
+
+        input.clear();
+
+        assert!(!input.is_key_pressed(KeyCode::W));
+        assert!(!input.is_key_pressed(KeyCode::Space));
+        assert_eq!(input.event_count(), 0);
     }
 }
