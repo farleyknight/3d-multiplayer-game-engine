@@ -46,6 +46,10 @@ const GROUND_Y: f32 = 0.0;
 /// Higher than real gravity (9.8) for snappier game feel
 const GRAVITY: f32 = 20.0;
 
+/// Jump velocity in units per second
+/// Applied upward when player presses Space while on ground
+const JUMP_VELOCITY: f32 = 8.0;
+
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
 pub fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
@@ -286,6 +290,7 @@ fn main() {
     let mut a_pressed = false;
     let mut s_pressed = false;
     let mut d_pressed = false;
+    let mut space_pressed = false;
 
     log::info!("Window created and wgpu initialized");
 
@@ -328,6 +333,7 @@ fn main() {
                             KeyCode::KeyA => a_pressed = pressed,
                             KeyCode::KeyS => s_pressed = pressed,
                             KeyCode::KeyD => d_pressed = pressed,
+                            KeyCode::Space => space_pressed = pressed,
                             _ => {}
                         }
                     }
@@ -397,6 +403,11 @@ fn main() {
                                     movement = movement.normalize() * MOVE_SPEED * delta_time;
                                     player.position += movement;
                                 }
+                            }
+
+                            // Jump when space is pressed and player is on ground
+                            if space_pressed && player.position.y <= GROUND_Y {
+                                velocity_y = JUMP_VELOCITY;
                             }
 
                             // Apply gravity - accelerate downward
