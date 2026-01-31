@@ -24,6 +24,9 @@ mod jump;
 #[path = "box_interaction_integration.rs"]
 mod box_interaction;
 
+#[path = "movement_video_integration.rs"]
+mod movement_video;
+
 /// Placeholder test to verify the integration test runner compiles and runs.
 /// The actual tests are in the included modules above.
 #[test]
@@ -33,4 +36,5 @@ fn integration_test_runner_works() {
     println!("  - movement (WASD controls)");
     println!("  - jump (jump physics)");
     println!("  - box_interaction (dynamic boxes)");
+    println!("  - movement_video (WASD movement with video recording)");
 }
