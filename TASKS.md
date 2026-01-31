@@ -40,4 +40,4 @@
 - [x] End-to-end test: two clients see each other move → Two clients on same machine can see each other's movement
 
 ## Cross-Platform & CI
-- [ ] Add GitHub Actions workflow for Mac and Windows builds → Push to repo, both builds succeed in Actions
+- [x] Add GitHub Actions workflow for Mac and Windows builds → Push to repo, both builds succeed in Actions
