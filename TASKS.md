@@ -15,7 +15,7 @@
 
 ## Client Rendering Foundation
 - [x] Set up wgpu + winit window with basic render loop → Window opens, clears to sky blue, runs at 60fps
-- [ ] Implement perspective camera with view/projection matrices → Cube rendered at origin appears in 3D perspective
+- [x] Implement perspective camera with view/projection matrices → Cube rendered at origin appears in 3D perspective
 - [ ] Create simple colored mesh rendering (cube primitive) → Colored cube renders correctly on screen
 
 ## Client Scene
