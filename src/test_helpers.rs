@@ -4,7 +4,7 @@
 //! for visual regression testing.
 
 use std::path::Path;
-use wgpu::{Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Queue, Texture};
+use wgpu::{BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Queue, Texture};
 
 /// Captures a wgpu texture and saves it as a PNG file.
 ///
