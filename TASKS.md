@@ -28,7 +28,7 @@
 - [x] Implement WASD movement relative to facing direction → Character moves forward/back/strafe based on input
 
 ## Client Camera
-- [ ] Implement third-person camera following player → Camera stays 5 units behind, 2 units up, follows rotation
+- [x] Implement third-person camera following player → Camera stays 5 units behind, 2 units up, follows rotation
 
 ## Client Networking
 - [ ] Send PlayerUpdate packets to server at 20Hz → Wireshark/server logs show packets arriving

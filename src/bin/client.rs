@@ -64,6 +64,11 @@ fn main() {
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
 
+    // Initialize camera to follow player from the start
+    let (cam_pos, cam_target) = calculate_camera_from_player(&player);
+    render_state.camera.position = cam_pos;
+    render_state.camera.target = cam_target;
+
     // Track whether cursor is captured
     let mut cursor_captured = false;
 

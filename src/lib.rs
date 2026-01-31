@@ -538,9 +538,9 @@ pub mod render {
             };
             surface.configure(&device, &config);
 
-            // Create camera positioned at (0, 2, 5) looking at origin
+            // Create camera positioned at (0, 2, 5) looking at player head height
             let aspect_ratio = size.width as f32 / size.height as f32;
-            let camera = Camera::new(Vec3::new(0.0, 2.0, 5.0), Vec3::ZERO, aspect_ratio);
+            let camera = Camera::new(Vec3::new(0.0, 2.0, 5.0), Vec3::new(0.0, 1.0, 0.0), aspect_ratio);
 
             // Create vertex buffer
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
