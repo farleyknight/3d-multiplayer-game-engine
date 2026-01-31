@@ -42,6 +42,10 @@ const MOVE_SPEED: f32 = 5.0;
 /// Ground floor level - player cannot fall below this
 const GROUND_Y: f32 = 0.0;
 
+/// Gravity acceleration in units per second squared
+/// Higher than real gravity (9.8) for snappier game feel
+const GRAVITY: f32 = 20.0;
+
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
 pub fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
@@ -103,6 +107,9 @@ fn run_headless() {
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
 
+    // Vertical velocity for gravity physics
+    let mut velocity_y: f32 = 0.0;
+
     // Other players received from WorldState broadcasts
     let mut other_players: HashMap<u32, PlayerData> = HashMap::new();
 
@@ -121,8 +128,21 @@ fn run_headless() {
         let elapsed = now - last_frame;
 
         if elapsed >= FRAME_DURATION {
+            let delta_time = elapsed.as_secs_f32();
             last_frame = now;
             frame_count += 1;
+
+            // Apply gravity - accelerate downward
+            velocity_y -= GRAVITY * delta_time;
+
+            // Apply vertical velocity to position
+            player.position.y += velocity_y * delta_time;
+
+            // Floor collision - prevent falling below ground level
+            if player.position.y < GROUND_Y {
+                player.position.y = GROUND_Y;
+                velocity_y = 0.0; // Reset velocity when hitting ground
+            }
 
             // Send player update to server at 20Hz
             if now.duration_since(last_network_update) >= NETWORK_UPDATE_INTERVAL {
@@ -246,6 +266,9 @@ fn main() {
 
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
+
+    // Vertical velocity for gravity physics
+    let mut velocity_y: f32 = 0.0;
 
     // Other players received from WorldState broadcasts
     let mut other_players: HashMap<u32, PlayerData> = HashMap::new();
@@ -373,19 +396,26 @@ fn main() {
                                 if movement.length_squared() > 0.0 {
                                     movement = movement.normalize() * MOVE_SPEED * delta_time;
                                     player.position += movement;
-
-                                    // Floor collision - prevent falling below ground level
-                                    if player.position.y < GROUND_Y {
-                                        player.position.y = GROUND_Y;
-                                    }
-
-                                    // Update camera to follow player
-                                    let (camera_pos, camera_target) =
-                                        calculate_camera_from_player(&player);
-                                    render_state.camera.position = camera_pos;
-                                    render_state.camera.target = camera_target;
                                 }
                             }
+
+                            // Apply gravity - accelerate downward
+                            velocity_y -= GRAVITY * delta_time;
+
+                            // Apply vertical velocity to position
+                            player.position.y += velocity_y * delta_time;
+
+                            // Floor collision - prevent falling below ground level
+                            if player.position.y < GROUND_Y {
+                                player.position.y = GROUND_Y;
+                                velocity_y = 0.0; // Reset velocity when hitting ground
+                            }
+
+                            // Update camera to follow player
+                            let (camera_pos, camera_target) =
+                                calculate_camera_from_player(&player);
+                            render_state.camera.position = camera_pos;
+                            render_state.camera.target = camera_target;
 
                             // Send player update to server at 20Hz
                             if now.duration_since(last_network_update) >= NETWORK_UPDATE_INTERVAL {
@@ -715,5 +745,64 @@ mod tests {
     #[test]
     fn test_server_addr_is_localhost() {
         assert_eq!(SERVER_ADDR, "127.0.0.1:7878");
+    }
+
+    #[test]
+    fn test_gravity_constant_reasonable() {
+        // Gravity should be positive and reasonable for game feel
+        // Standard gravity is 9.8 m/s², games often use 10-30 for snappier feel
+        assert!(GRAVITY > 0.0, "Gravity should be positive");
+        assert!(GRAVITY >= 5.0, "Gravity should be at least 5.0 for noticeable effect");
+        assert!(GRAVITY <= 50.0, "Gravity should not be excessively high");
+    }
+
+    #[test]
+    fn test_gravity_velocity_increases_over_time() {
+        // Simulate gravity for several frames
+        let mut velocity_y: f32 = 0.0;
+        let delta_time = 1.0 / 60.0; // 60 FPS
+
+        // After one frame, velocity should be negative (falling)
+        velocity_y -= GRAVITY * delta_time;
+        assert!(velocity_y < 0.0, "After gravity, velocity should be negative");
+
+        let velocity_after_one = velocity_y;
+
+        // After another frame, velocity should be more negative (accelerating)
+        velocity_y -= GRAVITY * delta_time;
+        assert!(
+            velocity_y < velocity_after_one,
+            "Velocity should increase in magnitude over time"
+        );
+    }
+
+    #[test]
+    fn test_floor_collision_resets_velocity() {
+        // Simulate a falling player hitting the ground
+        let mut position_y = 1.0; // Start above ground
+        let mut velocity_y: f32 = -10.0; // Falling downward
+        let delta_time = 0.5; // Large dt to ensure we go below ground
+
+        // Apply velocity
+        position_y += velocity_y * delta_time;
+
+        // Position should now be below GROUND_Y
+        assert!(position_y < GROUND_Y, "Position should be below ground before collision check");
+
+        // Apply floor collision
+        if position_y < GROUND_Y {
+            position_y = GROUND_Y;
+            velocity_y = 0.0;
+        }
+
+        // Verify collision behavior
+        assert_eq!(position_y, GROUND_Y, "Position should be clamped to GROUND_Y");
+        assert_eq!(velocity_y, 0.0, "Velocity should be reset to 0 on collision");
+    }
+
+    #[test]
+    fn test_ground_level_is_zero() {
+        // GROUND_Y should be 0 so player stands at origin height
+        assert_eq!(GROUND_Y, 0.0, "Ground level should be at Y=0");
     }
 }
