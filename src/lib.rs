@@ -335,6 +335,33 @@ pub mod render {
     /// Local player color: Blue (#4444FF)
     const PLAYER_BLUE: [f32; 3] = [0.267, 0.267, 1.0];
 
+    /// Static environment object definition
+    pub struct StaticObject {
+        pub position: (f32, f32, f32),
+        pub size: (f32, f32, f32),
+        pub color: [f32; 3],
+    }
+
+    // Colors for static objects
+    const GRAY: [f32; 3] = [0.5, 0.5, 0.5];
+    const DARK_GRAY: [f32; 3] = [0.3, 0.3, 0.3];
+    const BROWN: [f32; 3] = [0.545, 0.271, 0.075];
+    const GREEN: [f32; 3] = [0.2, 0.6, 0.2];
+
+    /// Static environment objects scattered around the scene
+    pub const STATIC_OBJECTS: &[StaticObject] = &[
+        // Cubes
+        StaticObject { position: (10.0, 1.0, 10.0), size: (2.0, 2.0, 2.0), color: GRAY },
+        StaticObject { position: (-15.0, 0.5, 5.0), size: (1.0, 1.0, 1.0), color: BROWN },
+        StaticObject { position: (8.0, 1.5, -12.0), size: (3.0, 3.0, 3.0), color: DARK_GRAY },
+        StaticObject { position: (-5.0, 0.75, -18.0), size: (1.5, 1.5, 1.5), color: GREEN },
+        StaticObject { position: (18.0, 1.0, -5.0), size: (2.0, 2.0, 2.0), color: BROWN },
+        // Walls (tall thin boxes)
+        StaticObject { position: (-20.0, 2.0, 0.0), size: (1.0, 4.0, 8.0), color: GRAY },
+        StaticObject { position: (0.0, 2.0, -20.0), size: (8.0, 4.0, 1.0), color: DARK_GRAY },
+        StaticObject { position: (15.0, 1.5, 15.0), size: (0.5, 3.0, 6.0), color: BROWN },
+    ];
+
     /// Generate cube vertices at a given offset with a given size and color
     /// Size is (width, height, depth) and offset is the center position
     fn create_cube_vertices(
@@ -374,6 +401,23 @@ pub mod render {
             // Bottom face
             start + 4, start + 5, start + 1, start + 1, start + 0, start + 4,
         ]
+    }
+
+    /// Build mesh for all static environment objects
+    /// Returns (vertices, indices) for all static objects combined
+    pub fn build_static_objects_mesh() -> (Vec<Vertex>, Vec<u16>) {
+        let mut vertices = Vec::with_capacity(STATIC_OBJECTS.len() * 8);
+        let mut indices = Vec::with_capacity(STATIC_OBJECTS.len() * 36);
+
+        for (i, obj) in STATIC_OBJECTS.iter().enumerate() {
+            let cube_verts = create_cube_vertices(obj.size, obj.position, obj.color);
+            vertices.extend_from_slice(&cube_verts);
+
+            let cube_indices = create_cube_indices((i * 8) as u16);
+            indices.extend_from_slice(&cube_indices);
+        }
+
+        (vertices, indices)
     }
 
     /// Build humanoid vertices from body parts
@@ -433,6 +477,9 @@ pub mod render {
         humanoid_vertex_buffer: Buffer,
         humanoid_index_buffer: Buffer,
         humanoid_num_indices: u32,
+        static_objects_vertex_buffer: Buffer,
+        static_objects_index_buffer: Buffer,
+        static_objects_num_indices: u32,
         uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
@@ -539,6 +586,20 @@ pub mod render {
             });
             let humanoid_num_indices = humanoid_indices.len() as u32;
 
+            // Create static objects mesh buffers
+            let (static_objects_vertices, static_objects_indices) = build_static_objects_mesh();
+            let static_objects_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Static Objects Vertex Buffer"),
+                contents: bytemuck::cast_slice(&static_objects_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let static_objects_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Static Objects Index Buffer"),
+                contents: bytemuck::cast_slice(&static_objects_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let static_objects_num_indices = static_objects_indices.len() as u32;
+
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("MVP Uniform Buffer"),
@@ -630,6 +691,9 @@ pub mod render {
                 humanoid_vertex_buffer,
                 humanoid_index_buffer,
                 humanoid_num_indices,
+                static_objects_vertex_buffer,
+                static_objects_index_buffer,
+                static_objects_num_indices,
                 uniform_buffer,
                 bind_group,
                 pipeline,
@@ -691,6 +755,11 @@ pub mod render {
                 render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
+
+                // Draw static environment objects
+                render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
 
                 // Draw humanoid character at origin
                 render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
@@ -1168,5 +1237,62 @@ mod tests {
         // Humanoid should be roughly symmetric around x=0
         // With arms at ±0.4 and arm width 0.2, extent is about ±0.5
         assert!((min_x + max_x).abs() < 0.001, "Humanoid should be centered on X axis");
+    }
+
+    #[test]
+    fn test_static_objects_count() {
+        use crate::render::STATIC_OBJECTS;
+
+        // Should have 8 static objects (5 cubes + 3 walls)
+        assert_eq!(STATIC_OBJECTS.len(), 8);
+    }
+
+    #[test]
+    fn test_static_objects_vertex_count() {
+        use crate::render::build_static_objects_mesh;
+
+        let (vertices, _) = build_static_objects_mesh();
+        // 8 objects * 8 vertices each = 64 vertices
+        assert_eq!(vertices.len(), 64);
+    }
+
+    #[test]
+    fn test_static_objects_index_count() {
+        use crate::render::build_static_objects_mesh;
+
+        let (_, indices) = build_static_objects_mesh();
+        // 8 objects * 36 indices each = 288 indices
+        assert_eq!(indices.len(), 288);
+    }
+
+    #[test]
+    fn test_static_objects_indices_valid() {
+        use crate::render::build_static_objects_mesh;
+
+        let (vertices, indices) = build_static_objects_mesh();
+        // All indices should be within vertex bounds
+        for &index in &indices {
+            assert!(
+                (index as usize) < vertices.len(),
+                "Index {} out of bounds for {} vertices",
+                index,
+                vertices.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_static_objects_not_at_origin() {
+        use crate::render::STATIC_OBJECTS;
+
+        // No object should be at or very near the origin (where players spawn)
+        for obj in STATIC_OBJECTS {
+            let dist_from_origin = (obj.position.0.powi(2) + obj.position.2.powi(2)).sqrt();
+            assert!(
+                dist_from_origin > 3.0,
+                "Static object at ({}, {}, {}) is too close to origin spawn point",
+                obj.position.0, obj.position.1, obj.position.2
+            );
+        }
     }
 }

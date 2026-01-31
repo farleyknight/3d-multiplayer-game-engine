@@ -21,7 +21,7 @@
 ## Client Scene
 - [x] Render ground plane at y=0 → Gray 50×50 quad visible in scene
 - [x] Render humanoid character from basic shapes → Multi-part character (head, torso, arms, legs) visible
-- [ ] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
+- [x] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
 
 ## Client Input & Movement
 - [ ] Implement mouse capture and look controls → Mouse captured, moving mouse rotates camera/player yaw
