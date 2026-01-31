@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
+use std::time::Instant;
 
 use game_engine::network::{
     deserialize_client_packet, serialize_server_packet, ClientPacket, ConnectedClient,
-    ServerPacket, DEFAULT_PORT,
+    ServerPacket, BROADCAST_INTERVAL_MS, DEFAULT_PORT,
 };
 use game_engine::types::PlayerData;
 
@@ -30,6 +31,8 @@ fn main() {
     let mut clients: HashMap<SocketAddr, ConnectedClient> = HashMap::new();
     let mut next_player_id: u32 = 1;
     let mut recv_buf = [0u8; 1024];
+    let mut last_broadcast = Instant::now();
+    let broadcast_interval = std::time::Duration::from_millis(BROADCAST_INTERVAL_MS);
 
     loop {
         match socket.recv_from(&mut recv_buf) {
@@ -62,6 +65,12 @@ fn main() {
                 log::info!("Client {} (player {}) timed out", addr, client.player_id);
                 broadcast_player_left(&socket, &clients, client.player_id);
             }
+        }
+
+        // Broadcast world state at fixed interval
+        if last_broadcast.elapsed() >= broadcast_interval {
+            broadcast_world_state(&socket, &clients);
+            last_broadcast = Instant::now();
         }
 
         // Brief sleep to avoid busy loop
@@ -117,8 +126,6 @@ fn handle_packet(
         }
     }
 
-    // Broadcast world state to all clients
-    broadcast_world_state(socket, clients);
 }
 
 fn send_packet(socket: &UdpSocket, packet: &ServerPacket, addr: SocketAddr) {
@@ -135,7 +142,17 @@ fn send_packet(socket: &UdpSocket, packet: &ServerPacket, addr: SocketAddr) {
 }
 
 fn broadcast_world_state(socket: &UdpSocket, clients: &HashMap<SocketAddr, ConnectedClient>) {
+    if clients.is_empty() {
+        return;
+    }
+
     let players: Vec<PlayerData> = clients.values().map(|c| c.state.into()).collect();
+
+    log::debug!(
+        "Broadcasting world state to {} client(s): {:?}",
+        clients.len(),
+        players.iter().map(|p| p.player_id).collect::<Vec<_>>()
+    );
 
     let packet = ServerPacket::WorldState { players };
 

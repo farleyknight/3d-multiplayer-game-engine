@@ -11,7 +11,7 @@
 ## Server Implementation
 - [x] Create UDP server that listens and tracks connected clients → Server starts, logs "Listening on 0.0.0.0:7878"
 - [x] Implement player state management (join, update, timeout) → Integration test: fake client sends packets, server tracks player
-- [ ] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
+- [x] Implement world state broadcast to all clients → Server logs broadcast activity when clients connected
 
 ## Client Rendering Foundation
 - [ ] Set up wgpu + winit window with basic render loop → Window opens, clears to sky blue, runs at 60fps
