@@ -41,3 +41,15 @@
 
 ## Cross-Platform & CI
 - [x] Add GitHub Actions workflow for Mac and Windows builds → Push to repo, both builds succeed in Actions
+
+## Local Build & Testing Infrastructure
+- [x] Add: Document local compilation steps in CONTEXT.md → Commands section includes `cargo build` prerequisites and platform-specific notes
+- [ ] Add: Create `tests/screenshots/` directory with .gitkeep → `ls tests/screenshots/` shows the directory exists
+- [ ] Add: Screenshot capture utility function in test helpers → Function takes wgpu surface/texture and saves PNG to specified path
+
+## Single-Player Integration Tests with Screenshots
+- [ ] Add: Headless rendering mode for client → Client can run with `--headless` flag without opening a window, using wgpu's offscreen rendering
+- [ ] Add: Integration test for player movement → Test spawns client, moves WASD, captures screenshots at each position in `tests/screenshots/movement_*.png`
+- [ ] Add: Integration test for player jumping → Test spawns client, presses jump, captures screenshots showing player airborne in `tests/screenshots/jump_*.png`
+- [ ] Add: Integration test for box interaction → Test spawns client, moves boxes, captures screenshots showing boxes in new positions in `tests/screenshots/box_*.png`
+- [ ] Add: Integration test runner script → `cargo test --test integration` runs all visual tests and generates screenshots

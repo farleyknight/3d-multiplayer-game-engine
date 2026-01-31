@@ -25,6 +25,16 @@ A simple 3D multiplayer game where two players can move around a shared space an
 ```
 
 ## Commands
+
+### Prerequisites
+- **Rust**: Install via [rustup](https://rustup.rs/) - run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **Rust version**: Stable toolchain (run `rustup default stable`)
+
+### Platform-Specific Notes
+- **macOS**: Requires Xcode Command Line Tools (`xcode-select --install`) - provides Metal SDK for GPU rendering
+- **Windows**: Requires Visual Studio Build Tools or Visual Studio with "Desktop development with C++" workload - provides compiler and DX12/Vulkan support
+
+### Build & Run
 - Build: `cargo build --release`
 - Run Server: `cargo run --bin server`
 - Run Client: `cargo run --bin client`
