@@ -1,7 +1,9 @@
+use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use game_engine::{network, render, types::PlayerState};
+use game_engine::network::{self, serialize_client_packet, ClientPacket, DEFAULT_PORT};
+use game_engine::{render, types::PlayerState};
 use glam::Vec3;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
@@ -11,6 +13,12 @@ use winit::window::{CursorGrabMode, WindowBuilder};
 
 /// Target frame duration for 60fps
 const FRAME_DURATION: Duration = Duration::from_micros(16_667);
+
+/// Network update interval (20Hz = 50ms)
+const NETWORK_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Server address for LAN multiplayer
+const SERVER_ADDR: &str = "127.0.0.1:7878";
 
 /// Mouse sensitivity for look controls
 const MOUSE_SENSITIVITY: f32 = 0.003;
@@ -46,7 +54,17 @@ fn main() {
     env_logger::init();
     log::info!("Starting client v{}...", game_engine::VERSION);
     log::info!("Window title: {}", render::WINDOW_TITLE);
-    log::info!("Connecting to server on port {}", network::DEFAULT_PORT);
+    log::info!("Connecting to server on port {}", DEFAULT_PORT);
+
+    // Create UDP socket with ephemeral port
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket");
+    socket
+        .set_nonblocking(true)
+        .expect("Failed to set socket to non-blocking");
+    log::info!(
+        "UDP socket bound to {}",
+        socket.local_addr().expect("Failed to get local address")
+    );
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
 
@@ -60,6 +78,7 @@ fn main() {
 
     let mut render_state = pollster::block_on(render::RenderState::new(window.clone()));
     let mut last_frame = Instant::now();
+    let mut last_network_update = Instant::now();
 
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
@@ -194,6 +213,26 @@ fn main() {
                                     render_state.camera.position = camera_pos;
                                     render_state.camera.target = camera_target;
                                 }
+                            }
+
+                            // Send player update to server at 20Hz
+                            if now.duration_since(last_network_update) >= NETWORK_UPDATE_INTERVAL {
+                                let packet = ClientPacket::PlayerUpdate(player);
+                                if let Ok(bytes) = serialize_client_packet(&packet) {
+                                    match socket.send_to(&bytes, SERVER_ADDR) {
+                                        Ok(_) => {
+                                            log::debug!(
+                                                "Sent PlayerUpdate: pos={:?}, yaw={}",
+                                                player.position,
+                                                player.rotation_yaw
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Failed to send packet: {}", e);
+                                        }
+                                    }
+                                }
+                                last_network_update = now;
                             }
 
                             match render_state.render() {
@@ -417,5 +456,20 @@ mod tests {
         // Moving forward + right should give a normalized diagonal
         let diagonal = (forward + right).normalize();
         assert!((diagonal.length() - 1.0).abs() < 0.001, "Diagonal movement should be normalized");
+    }
+
+    #[test]
+    fn test_network_update_interval_is_50ms() {
+        // 20Hz = 1000ms / 20 = 50ms
+        assert_eq!(
+            NETWORK_UPDATE_INTERVAL,
+            Duration::from_millis(50),
+            "Network update interval should be 50ms (20Hz)"
+        );
+    }
+
+    #[test]
+    fn test_server_addr_is_localhost() {
+        assert_eq!(SERVER_ADDR, "127.0.0.1:7878");
     }
 }
