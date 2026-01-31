@@ -805,6 +805,24 @@ pub mod render {
         (vertices, indices)
     }
 
+    /// Build mesh for all static environment objects using textured vertices.
+    /// Returns (vertices, indices) for all static objects combined with UV mapping.
+    pub fn build_textured_static_objects_mesh() -> (Vec<TexturedVertex>, Vec<u16>) {
+        let mut vertices = Vec::with_capacity(STATIC_OBJECTS.len() * 24);
+        let mut indices = Vec::with_capacity(STATIC_OBJECTS.len() * 36);
+
+        for (i, obj) in STATIC_OBJECTS.iter().enumerate() {
+            // Use white color (1.0, 1.0, 1.0) so texture colors show through without tinting
+            let cube_verts = create_textured_cube_vertices(obj.size, obj.position, [1.0, 1.0, 1.0]);
+            vertices.extend_from_slice(&cube_verts);
+
+            let cube_indices = create_textured_cube_indices((i * 24) as u16);
+            indices.extend_from_slice(&cube_indices);
+        }
+
+        (vertices, indices)
+    }
+
     /// Build humanoid vertices from body parts
     /// Returns (vertices, indices) for the complete humanoid mesh
     pub fn build_humanoid_mesh(color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
@@ -901,6 +919,12 @@ pub mod render {
         static_objects_vertex_buffer: Buffer,
         static_objects_index_buffer: Buffer,
         static_objects_num_indices: u32,
+        // Textured rendering fields
+        textured_objects_vertex_buffer: Buffer,
+        textured_objects_index_buffer: Buffer,
+        textured_objects_num_indices: u32,
+        textured_bind_group: BindGroup,
+        textured_pipeline: RenderPipeline,
         uniform_buffer: Buffer,
         bind_group: BindGroup,
         pipeline: RenderPipeline,
@@ -1027,12 +1051,85 @@ pub mod render {
             });
             let static_objects_num_indices = static_objects_indices.len() as u32;
 
+            // Create textured static objects mesh buffers
+            let (textured_objects_vertices, textured_objects_indices) = build_textured_static_objects_mesh();
+            let textured_objects_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Textured Objects Vertex Buffer"),
+                contents: bytemuck::cast_slice(&textured_objects_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let textured_objects_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Textured Objects Index Buffer"),
+                contents: bytemuck::cast_slice(&textured_objects_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let textured_objects_num_indices = textured_objects_indices.len() as u32;
+
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("MVP Uniform Buffer"),
                 contents: bytemuck::cast_slice(&[Mat4::IDENTITY]),
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
+
+            // Load block texture for textured rendering
+            // Try to load cobblestone texture, fall back to creating a default texture if not available
+            let texture_path = std::path::Path::new("textures/default-textures/textures/blocks/cobblestone.png");
+            let block_texture = if texture_path.exists() {
+                crate::texture::load_png(&device, &queue, texture_path)
+                    .map_err(|e| format!("Failed to load texture: {}", e))?
+            } else {
+                // Create a simple 16x16 checkerboard fallback texture
+                let mut fallback_data = vec![0u8; 16 * 16 * 4];
+                for y in 0..16 {
+                    for x in 0..16 {
+                        let idx = (y * 16 + x) * 4;
+                        let is_light = (x / 4 + y / 4) % 2 == 0;
+                        let color = if is_light { 200u8 } else { 100u8 };
+                        fallback_data[idx] = color;     // R
+                        fallback_data[idx + 1] = color; // G
+                        fallback_data[idx + 2] = color; // B
+                        fallback_data[idx + 3] = 255;   // A
+                    }
+                }
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Fallback Block Texture"),
+                    size: wgpu::Extent3d {
+                        width: 16,
+                        height: 16,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &fallback_data,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(16 * 4),
+                        rows_per_image: Some(16),
+                    },
+                    wgpu::Extent3d {
+                        width: 16,
+                        height: 16,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                texture
+            };
+
+            let block_texture_view = block_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let block_sampler = crate::texture::create_pixel_art_sampler(&device);
 
             // Create bind group layout
             let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -1059,13 +1156,76 @@ pub mod render {
                 }],
             });
 
+            // Create textured bind group layout (MVP uniform + texture + sampler)
+            let textured_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Textured Bind Group Layout"),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+            // Create textured bind group
+            let textured_bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Textured Bind Group"),
+                layout: &textured_bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&block_texture_view),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&block_sampler),
+                    },
+                ],
+            });
+
             // Load shader
             let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+
+            // Load textured shader
+            let textured_shader = device.create_shader_module(include_wgsl!("textured_shader.wgsl"));
 
             // Create pipeline layout
             let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+            // Create textured pipeline layout
+            let textured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Textured Render Pipeline Layout"),
+                bind_group_layouts: &[&textured_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -1080,6 +1240,38 @@ pub mod render {
                 },
                 fragment: Some(FragmentState {
                     module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::TextureFormat::Rgba8UnormSrgb.into())],
+                }),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            });
+
+            // Create textured render pipeline
+            let textured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("Headless Textured Render Pipeline"),
+                layout: Some(&textured_pipeline_layout),
+                vertex: VertexState {
+                    module: &textured_shader,
+                    entry_point: "vs_main",
+                    buffers: &[TexturedVertex::desc()],
+                },
+                fragment: Some(FragmentState {
+                    module: &textured_shader,
                     entry_point: "fs_main",
                     targets: &[Some(wgpu::TextureFormat::Rgba8UnormSrgb.into())],
                 }),
@@ -1123,6 +1315,11 @@ pub mod render {
                 static_objects_vertex_buffer,
                 static_objects_index_buffer,
                 static_objects_num_indices,
+                textured_objects_vertex_buffer,
+                textured_objects_index_buffer,
+                textured_objects_num_indices,
+                textured_bind_group,
+                textured_pipeline,
                 uniform_buffer,
                 bind_group,
                 pipeline,
@@ -1145,6 +1342,7 @@ pub mod render {
                     label: Some("Headless Render Encoder"),
                 });
 
+            // Draw ground and reference cube with solid-color pipeline
             {
                 let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                     label: Some("Headless Render Pass"),
@@ -1172,15 +1370,34 @@ pub mod render {
                 render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
 
-                // Draw static environment objects (identity model matrix, same MVP)
-                render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
-
                 // Draw cube (for reference, identity model matrix)
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+
+            // Draw static environment objects with textured pipeline
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Textured Objects Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.textured_pipeline);
+                render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.textured_objects_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.textured_objects_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.textured_objects_num_indices, 0, 0..1);
             }
 
             // Draw local player (blue humanoid) at their position
@@ -1268,6 +1485,7 @@ pub mod render {
                     label: Some("Headless Render Encoder"),
                 });
 
+            // Draw ground and reference cube with solid-color pipeline
             {
                 let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                     label: Some("Headless Render Pass"),
@@ -1295,15 +1513,34 @@ pub mod render {
                 render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
 
-                // Draw static environment objects (identity model matrix, same MVP)
-                render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
-                render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
-
                 // Draw cube (for reference, identity model matrix)
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+
+            // Draw static environment objects with textured pipeline
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Textured Objects Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.textured_pipeline);
+                render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.textured_objects_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.textured_objects_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.textured_objects_num_indices, 0, 0..1);
             }
 
             // Draw dynamic boxes

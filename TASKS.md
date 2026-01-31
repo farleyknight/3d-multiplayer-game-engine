@@ -68,7 +68,7 @@
 ## 3D World - Textures & Lighting
 - [x] Add: Texture loading system for PNG files → Load textures from `textures/default-textures/textures/blocks/` directory
 - [x] Add: UV mapping for block faces → Each face of a cube can have a texture applied
-- [ ] Add: Textured block rendering → Blocks render with Minecraft textures instead of solid colors
+- [x] Add: Textured block rendering → Blocks render with Minecraft textures instead of solid colors
 - [ ] Add: Basic directional lighting → Scene has a sun-like light source casting basic shadows/shading
 - [ ] Add: Ambient lighting → Objects have base illumination even in shadow
 
