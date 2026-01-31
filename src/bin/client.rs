@@ -39,6 +39,9 @@ const CAMERA_HEIGHT: f32 = 2.0;
 /// Movement speed in units per second
 const MOVE_SPEED: f32 = 5.0;
 
+/// Ground floor level - player cannot fall below this
+const GROUND_Y: f32 = 0.0;
+
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
 pub fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
@@ -370,6 +373,11 @@ fn main() {
                                 if movement.length_squared() > 0.0 {
                                     movement = movement.normalize() * MOVE_SPEED * delta_time;
                                     player.position += movement;
+
+                                    // Floor collision - prevent falling below ground level
+                                    if player.position.y < GROUND_Y {
+                                        player.position.y = GROUND_Y;
+                                    }
 
                                     // Update camera to follow player
                                     let (camera_pos, camera_target) =

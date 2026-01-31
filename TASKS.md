@@ -60,7 +60,7 @@
 - [x] Verify: GitHub Actions builds the game correctly → GitHub Actions CI shows green checkmarks on both macOS and Windows
 
 ## 3D World - Floor & Physics
-- [ ] Add: Ground floor for player to stand and jump from → Player spawns on a solid floor at y=0, cannot fall through
+- [x] Add: Ground floor for player to stand and jump from → Player spawns on a solid floor at y=0, cannot fall through
 - [ ] Add: Basic gravity system → Player falls when not on ground, velocity increases over time
 - [ ] Add: Player jumping mechanic → Space key makes player jump, player returns to ground via gravity
 - [ ] Add: Floor collision detection → Player stops at y=0 (floor level), cannot fall below ground
