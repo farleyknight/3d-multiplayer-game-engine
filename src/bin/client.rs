@@ -15,6 +15,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, WindowBuilder};
 
+/// Number of frames to render in headless mode before exiting
+const HEADLESS_FRAME_COUNT: u32 = 10;
+
 /// Target frame duration for 60fps
 const FRAME_DURATION: Duration = Duration::from_micros(16_667);
 
@@ -54,9 +57,160 @@ pub fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
     (position, target)
 }
 
+/// Parse command-line arguments for headless mode
+fn parse_args() -> bool {
+    std::env::args().any(|arg| arg == "--headless")
+}
+
+/// Run the client in headless mode (no window, offscreen rendering)
+fn run_headless() {
+    log::info!("Running in headless mode");
+
+    // Create UDP socket with ephemeral port
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket");
+    socket
+        .set_nonblocking(true)
+        .expect("Failed to set socket to non-blocking");
+    log::info!(
+        "UDP socket bound to {}",
+        socket.local_addr().expect("Failed to get local address")
+    );
+
+    // Initialize headless render state
+    let mut render_state = match pollster::block_on(render::HeadlessRenderState::new(
+        render::HEADLESS_WIDTH,
+        render::HEADLESS_HEIGHT,
+    )) {
+        Ok(state) => state,
+        Err(e) => {
+            log::error!("Failed to initialize headless rendering: {}", e);
+            return;
+        }
+    };
+
+    log::info!(
+        "Headless rendering initialized ({}x{})",
+        render::HEADLESS_WIDTH,
+        render::HEADLESS_HEIGHT
+    );
+
+    // Buffer for receiving network packets
+    let mut recv_buf = [0u8; 1024];
+
+    // Local player state - player_id 0 means not yet assigned by server
+    let mut player = PlayerState::new(0);
+
+    // Other players received from WorldState broadcasts
+    let mut other_players: HashMap<u32, PlayerData> = HashMap::new();
+
+    // Initialize camera to follow player from the start
+    let (cam_pos, cam_target) = calculate_camera_from_player(&player);
+    render_state.camera.position = cam_pos;
+    render_state.camera.target = cam_target;
+
+    let mut last_frame = Instant::now();
+    let mut last_network_update = Instant::now();
+    let mut frame_count = 0u32;
+
+    // Simple loop without event loop
+    while frame_count < HEADLESS_FRAME_COUNT {
+        let now = Instant::now();
+        let elapsed = now - last_frame;
+
+        if elapsed >= FRAME_DURATION {
+            last_frame = now;
+            frame_count += 1;
+
+            // Send player update to server at 20Hz
+            if now.duration_since(last_network_update) >= NETWORK_UPDATE_INTERVAL {
+                let packet = ClientPacket::PlayerUpdate(player);
+                if let Ok(bytes) = serialize_client_packet(&packet) {
+                    match socket.send_to(&bytes, SERVER_ADDR) {
+                        Ok(_) => {
+                            log::debug!(
+                                "Sent PlayerUpdate: pos={:?}, yaw={}",
+                                player.position,
+                                player.rotation_yaw
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to send packet: {}", e);
+                        }
+                    }
+                }
+                last_network_update = now;
+            }
+
+            // Receive and process server packets
+            loop {
+                match socket.recv_from(&mut recv_buf) {
+                    Ok((len, _src_addr)) => {
+                        match deserialize_server_packet(&recv_buf[..len]) {
+                            Ok(packet) => match packet {
+                                ServerPacket::Welcome { assigned_player_id } => {
+                                    player.player_id = assigned_player_id;
+                                    log::info!(
+                                        "Received Welcome: assigned player_id={}",
+                                        assigned_player_id
+                                    );
+                                }
+                                ServerPacket::WorldState { players } => {
+                                    other_players.clear();
+                                    for p in players {
+                                        if p.player_id != player.player_id {
+                                            other_players.insert(p.player_id, p);
+                                        }
+                                    }
+                                }
+                                ServerPacket::PlayerLeft { player_id: left_id } => {
+                                    log::info!("Player {} left the game", left_id);
+                                    other_players.remove(&left_id);
+                                }
+                            },
+                            Err(e) => {
+                                log::warn!("Failed to deserialize server packet: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("recv_from error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Collect other players' positions for rendering
+            let other_players_vec: Vec<(glam::Vec3, f32)> = other_players
+                .values()
+                .map(|p| (p.position, p.rotation_yaw))
+                .collect();
+
+            // Render to offscreen texture
+            render_state.render_with_players(player.position, player.rotation_yaw, &other_players_vec);
+
+            log::debug!("Headless frame {} rendered", frame_count);
+        }
+
+        // Sleep briefly to avoid busy-waiting
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    log::info!("Headless mode completed {} frames", frame_count);
+}
+
 fn main() {
     env_logger::init();
     log::info!("Starting client v{}...", game_engine::VERSION);
+
+    // Check for headless mode
+    if parse_args() {
+        run_headless();
+        return;
+    }
+
     log::info!("Window title: {}", render::WINDOW_TITLE);
     log::info!("Connecting to server on port {}", DEFAULT_PORT);
 

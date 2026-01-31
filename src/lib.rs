@@ -503,6 +503,385 @@ pub mod render {
         pipeline: RenderPipeline,
     }
 
+    /// Default headless render dimensions
+    pub const HEADLESS_WIDTH: u32 = 800;
+    pub const HEADLESS_HEIGHT: u32 = 600;
+
+    /// Holds wgpu state for headless (offscreen) rendering without a window.
+    /// Useful for testing, CI/CD pipelines, and server-side rendering.
+    pub struct HeadlessRenderState {
+        pub device: Device,
+        pub queue: Queue,
+        pub camera: Camera,
+        pub width: u32,
+        pub height: u32,
+        render_texture: wgpu::Texture,
+        vertex_buffer: Buffer,
+        index_buffer: Buffer,
+        num_indices: u32,
+        ground_vertex_buffer: Buffer,
+        ground_index_buffer: Buffer,
+        ground_num_indices: u32,
+        humanoid_vertex_buffer: Buffer,
+        humanoid_index_buffer: Buffer,
+        humanoid_num_indices: u32,
+        other_player_vertex_buffer: Buffer,
+        other_player_index_buffer: Buffer,
+        other_player_num_indices: u32,
+        static_objects_vertex_buffer: Buffer,
+        static_objects_index_buffer: Buffer,
+        static_objects_num_indices: u32,
+        uniform_buffer: Buffer,
+        bind_group: BindGroup,
+        pipeline: RenderPipeline,
+    }
+
+    impl HeadlessRenderState {
+        /// Initialize headless wgpu rendering with the given dimensions.
+        pub async fn new(width: u32, height: u32) -> Result<Self, String> {
+            let instance = Instance::new(InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                ..Default::default()
+            });
+
+            let adapter = instance
+                .request_adapter(&RequestAdapterOptions {
+                    power_preference: PowerPreference::default(),
+                    compatible_surface: None, // No surface for headless
+                    force_fallback_adapter: false,
+                })
+                .await
+                .ok_or_else(|| "Failed to find a suitable GPU adapter for headless rendering".to_string())?;
+
+            let (device, queue) = adapter
+                .request_device(
+                    &DeviceDescriptor {
+                        required_features: Features::empty(),
+                        required_limits: Limits::default(),
+                        label: Some("Headless Device"),
+                    },
+                    None,
+                )
+                .await
+                .map_err(|e| format!("Failed to create device: {:?}", e))?;
+
+            // Create render texture for offscreen rendering
+            let render_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Headless Render Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+
+            // Create camera with aspect ratio for the render dimensions
+            let aspect_ratio = width as f32 / height as f32;
+            let camera = Camera::new(Vec3::new(0.0, 2.0, 5.0), Vec3::new(0.0, 1.0, 0.0), aspect_ratio);
+
+            // Create vertex buffer
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cube Vertex Buffer"),
+                contents: bytemuck::cast_slice(CUBE_VERTICES),
+                usage: BufferUsages::VERTEX,
+            });
+
+            // Create index buffer
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cube Index Buffer"),
+                contents: bytemuck::cast_slice(CUBE_INDICES),
+                usage: BufferUsages::INDEX,
+            });
+            let num_indices = CUBE_INDICES.len() as u32;
+
+            // Create ground vertex buffer
+            let ground_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ground Vertex Buffer"),
+                contents: bytemuck::cast_slice(GROUND_VERTICES),
+                usage: BufferUsages::VERTEX,
+            });
+
+            // Create ground index buffer
+            let ground_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ground Index Buffer"),
+                contents: bytemuck::cast_slice(GROUND_INDICES),
+                usage: BufferUsages::INDEX,
+            });
+            let ground_num_indices = GROUND_INDICES.len() as u32;
+
+            // Create humanoid mesh buffers for local player (blue)
+            let (humanoid_vertices, humanoid_indices) = build_humanoid_mesh(PLAYER_BLUE);
+            let humanoid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Humanoid Vertex Buffer"),
+                contents: bytemuck::cast_slice(&humanoid_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let humanoid_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Humanoid Index Buffer"),
+                contents: bytemuck::cast_slice(&humanoid_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let humanoid_num_indices = humanoid_indices.len() as u32;
+
+            // Create humanoid mesh buffers for other players (red)
+            let (other_player_vertices, other_player_indices) = build_humanoid_mesh(OTHER_PLAYER_RED);
+            let other_player_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Other Player Vertex Buffer"),
+                contents: bytemuck::cast_slice(&other_player_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let other_player_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Other Player Index Buffer"),
+                contents: bytemuck::cast_slice(&other_player_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let other_player_num_indices = other_player_indices.len() as u32;
+
+            // Create static objects mesh buffers
+            let (static_objects_vertices, static_objects_indices) = build_static_objects_mesh();
+            let static_objects_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Static Objects Vertex Buffer"),
+                contents: bytemuck::cast_slice(&static_objects_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let static_objects_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Static Objects Index Buffer"),
+                contents: bytemuck::cast_slice(&static_objects_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let static_objects_num_indices = static_objects_indices.len() as u32;
+
+            // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
+            let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("MVP Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[Mat4::IDENTITY]),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+
+            // Create bind group layout
+            let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("MVP Bind Group Layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+            // Create bind group
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("MVP Bind Group"),
+                layout: &bind_group_layout,
+                entries: &[BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            // Load shader
+            let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+
+            // Create pipeline layout
+            let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+            // Create render pipeline with texture format (not surface format)
+            let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("Headless Render Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[Vertex::desc()],
+                },
+                fragment: Some(FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::TextureFormat::Rgba8UnormSrgb.into())],
+                }),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            });
+
+            Ok(Self {
+                device,
+                queue,
+                camera,
+                width,
+                height,
+                render_texture,
+                vertex_buffer,
+                index_buffer,
+                num_indices,
+                ground_vertex_buffer,
+                ground_index_buffer,
+                ground_num_indices,
+                humanoid_vertex_buffer,
+                humanoid_index_buffer,
+                humanoid_num_indices,
+                other_player_vertex_buffer,
+                other_player_index_buffer,
+                other_player_num_indices,
+                static_objects_vertex_buffer,
+                static_objects_index_buffer,
+                static_objects_num_indices,
+                uniform_buffer,
+                bind_group,
+                pipeline,
+            })
+        }
+
+        /// Render a frame with the local player and other players to the offscreen texture.
+        /// Returns a reference to the render texture for screenshot capture.
+        pub fn render_with_players(
+            &mut self,
+            local_position: Vec3,
+            local_rotation_yaw: f32,
+            other_players: &[(Vec3, f32)],
+        ) -> &wgpu::Texture {
+            let view = self.render_texture.create_view(&TextureViewDescriptor::default());
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Headless Render Encoder"),
+                });
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(SKY_BLUE),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.pipeline);
+
+                // Draw ground plane first (identity model matrix)
+                let ground_mvp = self.camera.view_projection_matrix();
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[ground_mvp]));
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.ground_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.ground_num_indices, 0, 0..1);
+
+                // Draw static environment objects (identity model matrix, same MVP)
+                render_pass.set_vertex_buffer(0, self.static_objects_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.static_objects_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.static_objects_num_indices, 0, 0..1);
+
+                // Draw cube (for reference, identity model matrix)
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
+
+            // Draw local player (blue humanoid) at their position
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Local Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(local_position, local_rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.humanoid_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.humanoid_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.humanoid_num_indices, 0, 0..1);
+            }
+
+            // Draw each other player (red humanoid) at their position
+            for (position, rotation_yaw) in other_players {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Other Player Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                let model = player_model_matrix(*position, *rotation_yaw);
+                let mvp = self.camera.view_projection_matrix() * model;
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[mvp]));
+
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.other_player_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.other_player_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.other_player_num_indices, 0, 0..1);
+            }
+
+            self.queue.submit(std::iter::once(encoder.finish()));
+
+            &self.render_texture
+        }
+
+        /// Get a reference to the render texture for screenshot capture
+        pub fn render_texture(&self) -> &wgpu::Texture {
+            &self.render_texture
+        }
+    }
+
     impl<'window> RenderState<'window> {
         /// Initialize wgpu with the given window
         pub async fn new(window: Arc<Window>) -> Self {
@@ -1490,6 +1869,85 @@ mod tests {
         // All vertices should have the red color
         for vertex in &vertices {
             assert_eq!(vertex.color, OTHER_PLAYER_RED);
+        }
+    }
+
+    #[test]
+    fn test_headless_render_constants() {
+        use crate::render::{HEADLESS_HEIGHT, HEADLESS_WIDTH};
+
+        assert_eq!(HEADLESS_WIDTH, 800);
+        assert_eq!(HEADLESS_HEIGHT, 600);
+    }
+
+    #[test]
+    fn test_headless_render_state_initialization() {
+        use crate::render::HeadlessRenderState;
+
+        // Try to create a headless render state
+        let result = pollster::block_on(HeadlessRenderState::new(800, 600));
+
+        match result {
+            Ok(state) => {
+                // Verify dimensions
+                assert_eq!(state.width, 800);
+                assert_eq!(state.height, 600);
+                // Verify camera aspect ratio
+                let expected_aspect = 800.0 / 600.0;
+                assert!((state.camera.aspect_ratio - expected_aspect).abs() < 0.001);
+            }
+            Err(e) => {
+                // If no GPU is available, the test is inconclusive but should not fail
+                eprintln!("Skipping test_headless_render_state_initialization: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_headless_render_state_render_returns_texture() {
+        use crate::render::HeadlessRenderState;
+
+        let result = pollster::block_on(HeadlessRenderState::new(100, 100));
+
+        match result {
+            Ok(mut state) => {
+                // Render a frame and check we get a texture reference back
+                let texture = state.render_with_players(Vec3::ZERO, 0.0, &[]);
+
+                // Verify the texture has the expected dimensions
+                let size = texture.size();
+                assert_eq!(size.width, 100);
+                assert_eq!(size.height, 100);
+            }
+            Err(e) => {
+                eprintln!("Skipping test_headless_render_state_render_returns_texture: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_headless_render_state_with_other_players() {
+        use crate::render::HeadlessRenderState;
+
+        let result = pollster::block_on(HeadlessRenderState::new(100, 100));
+
+        match result {
+            Ok(mut state) => {
+                // Render with some other players
+                let other_players = vec![
+                    (Vec3::new(5.0, 0.0, 0.0), 0.0),
+                    (Vec3::new(-5.0, 0.0, 0.0), std::f32::consts::PI),
+                ];
+                let texture = state.render_with_players(Vec3::ZERO, 0.0, &other_players);
+
+                // Should return a valid texture
+                let size = texture.size();
+                assert_eq!(size.width, 100);
+                assert_eq!(size.height, 100);
+            }
+            Err(e) => {
+                eprintln!("Skipping test_headless_render_state_with_other_players: {}", e);
+            }
         }
     }
 }
