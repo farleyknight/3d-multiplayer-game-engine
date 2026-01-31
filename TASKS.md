@@ -80,8 +80,8 @@
 - [x] Add: Chunk-based world storage → World divided into 16x16x16 chunks for efficient rendering/storage
 
 ## Integration Tests - Video Recording
-- [ ] Add: Video recording capability for tests → Tests can record gameplay to MP4/WebM files in `tests/videos/`
-- [ ] Add: Frame capture to video encoder → Capture rendered frames and encode to video format
+- [x] Add: Video recording capability for tests → Tests can record gameplay to MP4/WebM files in `tests/videos/` → Note: Used openh264+mp4 crates with `test-helpers` feature flag; VideoRecorder captures frames and encodes to H.264/MP4
+- [x] Add: Frame capture to video encoder → Capture rendered frames and encode to video format
 - [ ] Add: Integration test with video output for movement → `tests/videos/movement_test.mp4` shows player WASD movement
 - [ ] Add: Integration test with video output for jumping → `tests/videos/jump_test.mp4` shows player jumping
 - [ ] Add: Integration test with video output for block interaction → `tests/videos/block_interaction.mp4` shows block place/destroy

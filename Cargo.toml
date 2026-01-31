@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-test-helpers = []
+test-helpers = ["openh264", "mp4"]
 
 [dependencies]
 wgpu = "0.19"
@@ -18,6 +18,8 @@ env_logger = "0.10"
 log = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
 image = "0.24"
+openh264 = { version = "0.6", optional = true }
+mp4 = { version = "0.14", optional = true }
 
 [[bin]]
 name = "client"
@@ -32,4 +34,4 @@ name = "game_engine"
 path = "src/lib.rs"
 
 [dev-dependencies]
-# No additional dev dependencies needed - image is now a regular dependency
+# No additional dev dependencies needed - video encoding deps are optional features
