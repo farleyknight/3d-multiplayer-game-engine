@@ -32,7 +32,7 @@
 
 ## Client Networking
 - [x] Send PlayerUpdate packets to server at 20Hz → Wireshark/server logs show packets arriving
-- [ ] Receive and parse WorldState packets from server → Console logs other player positions when received
+- [x] Receive and parse WorldState packets from server → Console logs other player positions when received
 - [ ] Render other players from received world state → Second client's character visible and moves correctly
 
 ## Integration

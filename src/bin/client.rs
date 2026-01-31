@@ -2,7 +2,11 @@ use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use game_engine::network::{self, serialize_client_packet, ClientPacket, DEFAULT_PORT};
+use game_engine::network::{
+    self, deserialize_server_packet, serialize_client_packet, ClientPacket, ServerPacket,
+    DEFAULT_PORT,
+};
+use std::io::ErrorKind;
 use game_engine::{render, types::PlayerState};
 use glam::Vec3;
 use winit::dpi::LogicalSize;
@@ -79,6 +83,9 @@ fn main() {
     let mut render_state = pollster::block_on(render::RenderState::new(window.clone()));
     let mut last_frame = Instant::now();
     let mut last_network_update = Instant::now();
+
+    // Buffer for receiving network packets
+    let mut recv_buf = [0u8; 1024];
 
     // Local player state - player_id 0 means not yet assigned by server
     let mut player = PlayerState::new(0);
@@ -233,6 +240,53 @@ fn main() {
                                     }
                                 }
                                 last_network_update = now;
+                            }
+
+                            // Receive and process server packets
+                            loop {
+                                match socket.recv_from(&mut recv_buf) {
+                                    Ok((len, _src_addr)) => {
+                                        match deserialize_server_packet(&recv_buf[..len]) {
+                                            Ok(packet) => match packet {
+                                                ServerPacket::Welcome { assigned_player_id } => {
+                                                    player.player_id = assigned_player_id;
+                                                    log::info!(
+                                                        "Received Welcome: assigned player_id={}",
+                                                        assigned_player_id
+                                                    );
+                                                }
+                                                ServerPacket::WorldState { players } => {
+                                                    for p in &players {
+                                                        if p.player_id != player.player_id {
+                                                            log::info!(
+                                                                "Other player {}: pos=({:.2}, {:.2}, {:.2}), yaw={:.2}",
+                                                                p.player_id,
+                                                                p.position.x,
+                                                                p.position.y,
+                                                                p.position.z,
+                                                                p.rotation_yaw
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                ServerPacket::PlayerLeft { player_id: left_id } => {
+                                                    log::info!("Player {} left the game", left_id);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                log::warn!("Failed to deserialize server packet: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                                        // No more data available
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        log::warn!("recv_from error: {}", e);
+                                        break;
+                                    }
+                                }
                             }
 
                             match render_state.render() {
