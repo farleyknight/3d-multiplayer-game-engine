@@ -24,7 +24,7 @@
 - [x] Add static environment objects (cubes, walls) → 6+ static objects scattered around the scene
 
 ## Client Input & Movement
-- [ ] Implement mouse capture and look controls → Mouse captured, moving mouse rotates camera/player yaw
+- [x] Implement mouse capture and look controls → Mouse captured, moving mouse rotates camera/player yaw
 - [ ] Implement WASD movement relative to facing direction → Character moves forward/back/strafe based on input
 
 ## Client Camera
