@@ -52,4 +52,4 @@
 - [x] Add: Integration test for player movement → Test spawns client, moves WASD, captures screenshots at each position in `tests/screenshots/movement_*.png`
 - [x] Add: Integration test for player jumping → Test spawns client, presses jump, captures screenshots showing player airborne in `tests/screenshots/jump_*.png`
 - [x] Add: Integration test for box interaction → Test spawns client, moves boxes, captures screenshots showing boxes in new positions in `tests/screenshots/box_*.png`
-- [ ] Add: Integration test runner script → `cargo test --test integration` runs all visual tests and generates screenshots
+- [x] Add: Integration test runner script → `cargo test --test integration` runs all visual tests and generates screenshots
