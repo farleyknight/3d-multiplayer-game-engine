@@ -916,9 +916,6 @@ pub mod render {
         other_player_vertex_buffer: Buffer,
         other_player_index_buffer: Buffer,
         other_player_num_indices: u32,
-        static_objects_vertex_buffer: Buffer,
-        static_objects_index_buffer: Buffer,
-        static_objects_num_indices: u32,
         // Textured rendering fields
         textured_objects_vertex_buffer: Buffer,
         textured_objects_index_buffer: Buffer,
@@ -1036,20 +1033,6 @@ pub mod render {
                 usage: BufferUsages::INDEX,
             });
             let other_player_num_indices = other_player_indices.len() as u32;
-
-            // Create static objects mesh buffers
-            let (static_objects_vertices, static_objects_indices) = build_static_objects_mesh();
-            let static_objects_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Static Objects Vertex Buffer"),
-                contents: bytemuck::cast_slice(&static_objects_vertices),
-                usage: BufferUsages::VERTEX,
-            });
-            let static_objects_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Static Objects Index Buffer"),
-                contents: bytemuck::cast_slice(&static_objects_indices),
-                usage: BufferUsages::INDEX,
-            });
-            let static_objects_num_indices = static_objects_indices.len() as u32;
 
             // Create textured static objects mesh buffers
             let (textured_objects_vertices, textured_objects_indices) = build_textured_static_objects_mesh();
@@ -1312,9 +1295,6 @@ pub mod render {
                 other_player_vertex_buffer,
                 other_player_index_buffer,
                 other_player_num_indices,
-                static_objects_vertex_buffer,
-                static_objects_index_buffer,
-                static_objects_num_indices,
                 textured_objects_vertex_buffer,
                 textured_objects_index_buffer,
                 textured_objects_num_indices,

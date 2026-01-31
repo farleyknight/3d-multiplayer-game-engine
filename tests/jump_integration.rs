@@ -1,21 +1,26 @@
 //! Integration test for player jumping.
 //! Tests jump physics (vertical velocity + gravity) and captures screenshots at different phases.
 
+#[cfg(feature = "test-helpers")]
 use game_engine::render::HeadlessRenderState;
 use game_engine::types::PlayerState;
 use glam::Vec3;
+#[cfg(feature = "test-helpers")]
 use std::path::Path;
 
 #[cfg(feature = "test-helpers")]
 use game_engine::test_helpers::capture_screenshot;
 
 /// Camera distance behind player (matches client.rs)
+#[cfg(feature = "test-helpers")]
 const CAMERA_DISTANCE: f32 = 5.0;
 
 /// Camera height above player (matches client.rs)
+#[cfg(feature = "test-helpers")]
 const CAMERA_HEIGHT: f32 = 2.0;
 
 /// Jump physics constants
+#[cfg(feature = "test-helpers")]
 const JUMP_VELOCITY: f32 = 8.0; // Initial upward velocity (units/sec)
 const GRAVITY: f32 = -20.0; // Downward acceleration (units/sec²)
 const GROUND_Y: f32 = 0.0; // Ground level
@@ -25,6 +30,7 @@ const PHYSICS_DT: f32 = 1.0 / 60.0;
 
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
+#[cfg(feature = "test-helpers")]
 fn calculate_camera_from_player(player: &PlayerState) -> (Vec3, Vec3) {
     // Camera looks at player's head height (approximately 1 unit up from position)
     let target = player.position + Vec3::new(0.0, 1.0, 0.0);
