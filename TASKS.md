@@ -53,3 +53,35 @@
 - [x] Add: Integration test for player jumping → Test spawns client, presses jump, captures screenshots showing player airborne in `tests/screenshots/jump_*.png`
 - [x] Add: Integration test for box interaction → Test spawns client, moves boxes, captures screenshots showing boxes in new positions in `tests/screenshots/box_*.png`
 - [x] Add: Integration test runner script → `cargo test --test integration` runs all visual tests and generates screenshots
+
+## Documentation & Deployment
+- [x] Add: Create README.md with project overview → README.md exists with build instructions, features, and screenshots section
+- [ ] Add: Push repository to GitHub → `git remote -v` shows GitHub origin and `git push` succeeds
+- [ ] Verify: GitHub Actions builds the game correctly → GitHub Actions CI shows green checkmarks on both macOS and Windows
+
+## 3D World - Floor & Physics
+- [ ] Add: Ground floor for player to stand and jump from → Player spawns on a solid floor at y=0, cannot fall through
+- [ ] Add: Basic gravity system → Player falls when not on ground, velocity increases over time
+- [ ] Add: Player jumping mechanic → Space key makes player jump, player returns to ground via gravity
+- [ ] Add: Floor collision detection → Player stops at y=0 (floor level), cannot fall below ground
+
+## 3D World - Textures & Lighting
+- [ ] Add: Texture loading system for PNG files → Load textures from `textures/default-textures/textures/blocks/` directory
+- [ ] Add: UV mapping for block faces → Each face of a cube can have a texture applied
+- [ ] Add: Textured block rendering → Blocks render with Minecraft textures instead of solid colors
+- [ ] Add: Basic directional lighting → Scene has a sun-like light source casting basic shadows/shading
+- [ ] Add: Ambient lighting → Objects have base illumination even in shadow
+
+## 3D World - Minecraft-like Environment
+- [ ] Add: Block type system → Define block types (grass, dirt, stone, cobblestone, wood) with associated textures
+- [ ] Add: Voxel world generation → Generate a simple flat world with grass on top, dirt below, stone deeper
+- [ ] Add: Block placement/destruction → Player can place and break blocks (left click destroy, right click place)
+- [ ] Add: Block face culling → Don't render faces between adjacent solid blocks (performance optimization)
+- [ ] Add: Chunk-based world storage → World divided into 16x16x16 chunks for efficient rendering/storage
+
+## Integration Tests - Video Recording
+- [ ] Add: Video recording capability for tests → Tests can record gameplay to MP4/WebM files in `tests/videos/`
+- [ ] Add: Frame capture to video encoder → Capture rendered frames and encode to video format
+- [ ] Add: Integration test with video output for movement → `tests/videos/movement_test.mp4` shows player WASD movement
+- [ ] Add: Integration test with video output for jumping → `tests/videos/jump_test.mp4` shows player jumping
+- [ ] Add: Integration test with video output for block interaction → `tests/videos/block_interaction.mp4` shows block place/destroy
