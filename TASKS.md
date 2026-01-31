@@ -95,7 +95,7 @@
 ## Input Simulation Infrastructure
 - [x] Add: Create InputSimulator module for integration tests → New module in src/lib.rs or src/input.rs that can simulate WASD+SpaceBar input events → Note: Added to test_helpers.rs with KeyCode enum, InputEvent struct, and InputSimulator with press_key/release_key/get_movement_state methods
 - [x] Add: InputSimulator can queue key press/release events → `InputSimulator::press_key(KeyCode::W)` and `release_key()` methods work
-- [ ] Add: InputSimulator integrates with game loop for state updates → Simulated inputs trigger actual movement/physics code paths instead of direct position modification
+- [x] Add: InputSimulator integrates with game loop for state updates → Simulated inputs trigger actual movement/physics code paths instead of direct position modification → Note: Added physics module with process_movement() and apply_physics() functions; InputSimulator now has update_player_movement() and update_player_physics() methods
 
 ## Integration Tests with Input Simulation
 - [ ] Add: Integration test proving WASD input simulation works → Test uses InputSimulator to send W key, asserts player.position.z changed (moved forward)

@@ -785,6 +785,174 @@ pub mod types {
     }
 }
 
+/// Physics processing for player movement and gravity.
+///
+/// This module provides shared physics functions that can be used by both
+/// the client game loop and the InputSimulator in integration tests.
+pub mod physics {
+    use glam::Vec3;
+
+    /// Physics constants matching the client game loop
+    pub const MOVE_SPEED: f32 = 5.0;
+    pub const GROUND_Y: f32 = 0.0;
+    pub const GRAVITY: f32 = 20.0;
+    pub const JUMP_VELOCITY: f32 = 8.0;
+
+    /// Represents the current state of movement input keys.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct MovementState {
+        pub w_pressed: bool,
+        pub a_pressed: bool,
+        pub s_pressed: bool,
+        pub d_pressed: bool,
+        pub space_pressed: bool,
+    }
+
+    impl MovementState {
+        /// Creates a new MovementState with all keys unpressed.
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Creates a MovementState from a tuple of booleans.
+        /// Order: (w_pressed, a_pressed, s_pressed, d_pressed, space_pressed)
+        pub fn from_tuple(state: (bool, bool, bool, bool, bool)) -> Self {
+            Self {
+                w_pressed: state.0,
+                a_pressed: state.1,
+                s_pressed: state.2,
+                d_pressed: state.3,
+                space_pressed: state.4,
+            }
+        }
+
+        /// Returns true if any movement key (WASD) is pressed.
+        pub fn has_movement(&self) -> bool {
+            self.w_pressed || self.a_pressed || self.s_pressed || self.d_pressed
+        }
+    }
+
+    /// Represents the physics state for vertical movement (jumping/gravity).
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct PhysicsState {
+        /// Current vertical velocity (positive = upward)
+        pub velocity_y: f32,
+        /// Whether the player is on the ground
+        pub on_ground: bool,
+    }
+
+    impl PhysicsState {
+        /// Creates a new PhysicsState with zero velocity on the ground.
+        pub fn new() -> Self {
+            Self {
+                velocity_y: 0.0,
+                on_ground: true,
+            }
+        }
+
+        /// Creates a PhysicsState with the given velocity.
+        pub fn with_velocity(velocity_y: f32) -> Self {
+            Self {
+                velocity_y,
+                on_ground: velocity_y == 0.0,
+            }
+        }
+    }
+
+    impl Default for PhysicsState {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// Calculates the movement vector based on input state and player yaw.
+    ///
+    /// # Arguments
+    /// * `movement_state` - Current state of movement input keys
+    /// * `yaw` - Player's rotation around the Y axis in radians
+    /// * `delta_time` - Time since last frame in seconds
+    ///
+    /// # Returns
+    /// A Vec3 representing the movement to apply to the player's position.
+    /// The Y component is always 0.0 (horizontal movement only).
+    pub fn process_movement(movement_state: &MovementState, yaw: f32, delta_time: f32) -> Vec3 {
+        // Calculate forward direction based on player yaw
+        // Player faces -Z when yaw = 0, so forward is negative of camera offset direction
+        let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+        // Right is perpendicular to forward (90 degrees clockwise in XZ plane)
+        let right = Vec3::new(forward.z, 0.0, -forward.x);
+
+        let mut movement = Vec3::ZERO;
+        if movement_state.w_pressed {
+            movement += forward;
+        }
+        if movement_state.s_pressed {
+            movement -= forward;
+        }
+        if movement_state.a_pressed {
+            movement -= right;
+        }
+        if movement_state.d_pressed {
+            movement += right;
+        }
+
+        // Normalize to prevent faster diagonal movement
+        if movement.length_squared() > 0.0 {
+            movement = movement.normalize() * MOVE_SPEED * delta_time;
+        }
+
+        movement
+    }
+
+    /// Applies physics (gravity and jumping) to update player position and physics state.
+    ///
+    /// # Arguments
+    /// * `physics_state` - Current physics state (velocity, on_ground)
+    /// * `position_y` - Current Y position of the player
+    /// * `delta_time` - Time since last frame in seconds
+    /// * `space_pressed` - Whether the jump key is pressed
+    ///
+    /// # Returns
+    /// A tuple of (new_position_y, new_physics_state)
+    pub fn apply_physics(
+        physics_state: &PhysicsState,
+        position_y: f32,
+        delta_time: f32,
+        space_pressed: bool,
+    ) -> (f32, PhysicsState) {
+        let mut velocity_y = physics_state.velocity_y;
+        let mut new_y = position_y;
+
+        // Jump when space is pressed and player is on ground
+        if space_pressed && position_y <= GROUND_Y {
+            velocity_y = JUMP_VELOCITY;
+        }
+
+        // Apply gravity - accelerate downward
+        velocity_y -= GRAVITY * delta_time;
+
+        // Apply vertical velocity to position
+        new_y += velocity_y * delta_time;
+
+        // Floor collision - prevent falling below ground level
+        let on_ground = if new_y < GROUND_Y {
+            new_y = GROUND_Y;
+            velocity_y = 0.0; // Reset velocity when hitting ground
+            true
+        } else {
+            false
+        };
+
+        (
+            new_y,
+            PhysicsState {
+                velocity_y,
+                on_ground,
+            },
+        )
+    }
+}
+
 /// Network protocol definitions
 pub mod network {
     use super::*;

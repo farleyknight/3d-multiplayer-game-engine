@@ -601,6 +601,88 @@ impl InputSimulator {
         self.event_queue.clear();
         self.key_states.clear();
     }
+
+    /// Updates player movement based on current input state.
+    ///
+    /// This method uses the physics module's `process_movement()` function
+    /// to calculate movement from the current key states, matching the
+    /// actual game loop behavior.
+    ///
+    /// # Arguments
+    /// * `position` - Current player position (will be modified in place)
+    /// * `yaw` - Player's rotation around the Y axis in radians
+    /// * `delta_time` - Time since last frame in seconds
+    ///
+    /// # Example
+    /// ```ignore
+    /// use game_engine::test_helpers::{InputSimulator, KeyCode};
+    /// use glam::Vec3;
+    ///
+    /// let mut input = InputSimulator::new();
+    /// let mut position = Vec3::ZERO;
+    ///
+    /// input.press_key(KeyCode::W);
+    /// input.update_player_movement(&mut position, 0.0, 1.0 / 60.0);
+    /// // position is now updated based on forward movement
+    /// ```
+    pub fn update_player_movement(
+        &self,
+        position: &mut glam::Vec3,
+        yaw: f32,
+        delta_time: f32,
+    ) {
+        use crate::physics::{process_movement, MovementState};
+
+        let (w, a, s, d, space) = self.get_movement_state();
+        let movement_state = MovementState {
+            w_pressed: w,
+            a_pressed: a,
+            s_pressed: s,
+            d_pressed: d,
+            space_pressed: space,
+        };
+
+        let movement = process_movement(&movement_state, yaw, delta_time);
+        *position += movement;
+    }
+
+    /// Updates player physics (gravity and jumping) based on current input state.
+    ///
+    /// This method uses the physics module's `apply_physics()` function
+    /// to handle jumping and gravity, matching the actual game loop behavior.
+    ///
+    /// # Arguments
+    /// * `position` - Current player position (Y component will be modified)
+    /// * `physics_state` - Current physics state (will be modified in place)
+    /// * `delta_time` - Time since last frame in seconds
+    ///
+    /// # Example
+    /// ```ignore
+    /// use game_engine::test_helpers::{InputSimulator, KeyCode};
+    /// use game_engine::physics::PhysicsState;
+    /// use glam::Vec3;
+    ///
+    /// let mut input = InputSimulator::new();
+    /// let mut position = Vec3::ZERO;
+    /// let mut physics = PhysicsState::new();
+    ///
+    /// input.press_key(KeyCode::Space);
+    /// input.update_player_physics(&mut position, &mut physics, 1.0 / 60.0);
+    /// // Player has jumped (velocity_y is now positive)
+    /// ```
+    pub fn update_player_physics(
+        &self,
+        position: &mut glam::Vec3,
+        physics_state: &mut crate::physics::PhysicsState,
+        delta_time: f32,
+    ) {
+        use crate::physics::apply_physics;
+
+        let space_pressed = self.is_key_pressed(KeyCode::Space);
+        let (new_y, new_physics) = apply_physics(physics_state, position.y, delta_time, space_pressed);
+        position.y = new_y;
+        *physics_state = new_physics;
+    }
 }
 
 impl Default for InputSimulator {
@@ -883,5 +965,104 @@ mod tests {
         assert!(!input.is_key_pressed(KeyCode::W));
         assert!(!input.is_key_pressed(KeyCode::Space));
         assert_eq!(input.event_count(), 0);
+    }
+
+    #[test]
+    fn test_input_simulator_update_player_movement() {
+        use glam::Vec3;
+
+        let mut input = InputSimulator::new();
+        let mut position = Vec3::ZERO;
+        let yaw = 0.0; // Facing -Z direction
+        let delta_time = 1.0; // 1 second for easy math
+
+        // Initially no movement
+        input.update_player_movement(&mut position, yaw, delta_time);
+        assert_eq!(position, Vec3::ZERO);
+
+        // Press W to move forward (-Z direction at yaw=0)
+        input.press_key(KeyCode::W);
+        input.update_player_movement(&mut position, yaw, delta_time);
+
+        // Movement should be in -Z direction
+        assert!(position.z < 0.0, "Expected negative Z movement, got {:?}", position);
+        assert!((position.x).abs() < 0.001, "Expected no X movement");
+        assert!((position.y).abs() < 0.001, "Expected no Y movement");
+
+        // Reset and test right movement (D key)
+        position = Vec3::ZERO;
+        input.clear();
+        input.press_key(KeyCode::D);
+        input.update_player_movement(&mut position, yaw, delta_time);
+
+        // At yaw=0, forward=(0,0,-1), so right=(-1,0,0) per the formula
+        // D key adds right, so movement is in -X direction
+        assert!(position.x < 0.0, "Expected negative X movement for D key at yaw=0, got {:?}", position);
+    }
+
+    #[test]
+    fn test_input_simulator_update_player_physics_jump() {
+        use crate::physics::{PhysicsState, GROUND_Y, JUMP_VELOCITY};
+        use glam::Vec3;
+
+        let mut input = InputSimulator::new();
+        let mut position = Vec3::new(0.0, GROUND_Y, 0.0);
+        let mut physics = PhysicsState::new();
+        let delta_time = 1.0 / 60.0; // 60 FPS frame
+
+        // Press space to jump
+        input.press_key(KeyCode::Space);
+        input.update_player_physics(&mut position, &mut physics, delta_time);
+
+        // Velocity should be jump velocity minus one frame of gravity
+        assert!(physics.velocity_y > 0.0, "Expected positive velocity after jump");
+
+        // Player should have moved up
+        assert!(position.y > GROUND_Y, "Expected player to be above ground after jump");
+    }
+
+    #[test]
+    fn test_input_simulator_update_player_physics_gravity() {
+        use crate::physics::{PhysicsState, GROUND_Y};
+        use glam::Vec3;
+
+        let mut input = InputSimulator::new();
+        // Start player above ground
+        let mut position = Vec3::new(0.0, 5.0, 0.0);
+        let mut physics = PhysicsState::with_velocity(0.0);
+        let delta_time = 1.0 / 60.0;
+
+        // No input, should fall due to gravity
+        input.update_player_physics(&mut position, &mut physics, delta_time);
+
+        // Velocity should be negative (falling)
+        assert!(physics.velocity_y < 0.0, "Expected negative velocity due to gravity");
+
+        // Player should be lower
+        assert!(position.y < 5.0, "Expected player to fall");
+    }
+
+    #[test]
+    fn test_input_simulator_combined_movement_and_physics() {
+        use crate::physics::PhysicsState;
+        use glam::Vec3;
+
+        let mut input = InputSimulator::new();
+        let mut position = Vec3::ZERO;
+        let mut physics = PhysicsState::new();
+        let yaw = 0.0;
+        let delta_time = 1.0 / 60.0;
+
+        // Press W (forward) and Space (jump) simultaneously
+        input.press_key(KeyCode::W);
+        input.press_key(KeyCode::Space);
+
+        // Update movement first, then physics
+        input.update_player_movement(&mut position, yaw, delta_time);
+        input.update_player_physics(&mut position, &mut physics, delta_time);
+
+        // Should have moved forward and up
+        assert!(position.z < 0.0, "Expected forward movement (negative Z)");
+        assert!(position.y > 0.0, "Expected upward movement from jump");
     }
 }
