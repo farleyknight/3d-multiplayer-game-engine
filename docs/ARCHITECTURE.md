@@ -37,6 +37,83 @@ The `position` field uses glam's `Vec3` type which provides x, y, z float compon
 - Y axis: up/down
 - Z axis: forward/back
 
+## Player Location Tracking
+
+This section documents how player position is stored, updated, and synchronized across the network.
+
+### Position Storage
+
+Player position is stored in the `position` field of `PlayerState` as a `Vec3` (glam's 3D vector type with x, y, z float components). The engine uses a Y-up coordinate system.
+
+### Movement Update (Client-Side)
+
+Player movement is processed in `src/bin/client.rs` using WASD keys:
+
+```rust
+// Key constants (src/bin/client.rs)
+const MOVE_SPEED: f32 = 5.0;  // units per second
+```
+
+Movement processing:
+1. Calculate forward direction from player yaw: `forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos())`
+2. Calculate right direction perpendicular to forward
+3. Accumulate movement based on pressed keys (W: +forward, S: -forward, A: -right, D: +right)
+4. Normalize movement to prevent faster diagonal movement
+5. Apply: `position += movement.normalize() * MOVE_SPEED * delta_time`
+
+### Physics Update (Client-Side)
+
+Physics is handled client-side in `src/bin/client.rs`:
+
+```rust
+// Physics constants (src/bin/client.rs)
+const GROUND_Y: f32 = 0.0;      // floor level
+const GRAVITY: f32 = 20.0;      // units/s² (higher than real for snappy feel)
+const JUMP_VELOCITY: f32 = 8.0; // units/s (applied when Space pressed on ground)
+```
+
+Physics loop per frame:
+1. **Jump**: If Space pressed AND on ground → set `velocity_y = JUMP_VELOCITY`
+2. **Gravity**: `velocity_y -= GRAVITY * delta_time`
+3. **Apply**: `position.y += velocity_y * delta_time`
+4. **Floor collision**: If `position.y < GROUND_Y` → clamp to `GROUND_Y`, reset `velocity_y = 0`
+
+### Network Synchronization
+
+Position data flows through the network as follows:
+
+```
+Client Input → Local Position Update → PlayerUpdate Packet → Server → WorldState Broadcast → Other Clients
+```
+
+**Client sends position (20Hz):**
+- Interval: 50ms (`NETWORK_UPDATE_INTERVAL`)
+- Packet: `ClientPacket::PlayerUpdate(PlayerState)` containing position and rotation_yaw
+- Serialization: bincode over UDP
+- Reference: `src/bin/client.rs:157-175`
+
+**Server receives and stores:**
+- Updates `ConnectedClient.state.position` and `rotation_yaw`
+- Reference: `src/bin/server.rs:97-127`
+
+**Server broadcasts to all clients (20Hz):**
+- Function: `broadcast_world_state()`
+- Packet: `ServerPacket::WorldState { players: Vec<PlayerData> }`
+- Contains all connected players' positions and rotations
+- Reference: `src/bin/server.rs:144-162`
+
+### Data Flow Summary
+
+| Step | Location | Data |
+|------|----------|------|
+| Input | Client game loop | WASD/Space keys |
+| Movement | `src/bin/client.rs:408-438` | Position += movement * speed * dt |
+| Physics | `src/bin/client.rs:441-456` | Gravity, jumping, floor collision |
+| Send | `src/bin/client.rs:157-175` | PlayerUpdate packet at 20Hz |
+| Receive | `src/bin/server.rs:97-127` | Server stores position |
+| Broadcast | `src/bin/server.rs:144-162` | WorldState to all clients |
+| Render | Other clients | Display remote player positions |
+
 ## VoxelWorld
 
 The world container that stores all block data organized into chunks. Defined in `src/lib.rs` within the `voxel` module.
