@@ -7,10 +7,10 @@ use game_engine::network::{
     deserialize_server_packet, serialize_client_packet, ClientPacket, ServerPacket, DEFAULT_PORT,
 };
 use std::io::ErrorKind;
-use game_engine::{render, types::{PlayerData, PlayerState}};
+use game_engine::{blocks::BlockType, raycast::raycast_voxel, render, types::{PlayerData, PlayerState}};
 use glam::Vec3;
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, WindowBuilder};
@@ -49,6 +49,12 @@ const GRAVITY: f32 = 20.0;
 /// Jump velocity in units per second
 /// Applied upward when player presses Space while on ground
 const JUMP_VELOCITY: f32 = 8.0;
+
+/// Maximum distance for block interaction (placement/destruction)
+const BLOCK_REACH_DISTANCE: f32 = 5.0;
+
+/// Eye height offset above player position for raycasting
+const EYE_HEIGHT: f32 = 1.6;
 
 /// Calculates camera position based on player state for third-person view.
 /// Camera is positioned behind and above the player, following the player's yaw.
@@ -292,6 +298,16 @@ fn main() {
     let mut d_pressed = false;
     let mut space_pressed = false;
 
+    // Track camera pitch for vertical look (used for raycasting)
+    let mut pitch: f32 = 0.0;
+
+    // Track mouse button clicks for block interaction (single-shot flags)
+    let mut left_mouse_clicked = false;
+    let mut right_mouse_clicked = false;
+
+    // Selected block type for placement (default: Cobblestone)
+    let selected_block_type = BlockType::Cobblestone;
+
     log::info!("Window created and wgpu initialized");
 
     event_loop
@@ -364,6 +380,23 @@ fn main() {
                         log::debug!("Resized to {:?}", physical_size);
                         render_state.resize(physical_size);
                     }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button,
+                        ..
+                    } => {
+                        if cursor_captured {
+                            match button {
+                                MouseButton::Left => {
+                                    left_mouse_clicked = true;
+                                }
+                                MouseButton::Right => {
+                                    right_mouse_clicked = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     WindowEvent::RedrawRequested => {
                         let now = Instant::now();
                         let elapsed = now - last_frame;
@@ -420,6 +453,55 @@ fn main() {
                             if player.position.y < GROUND_Y {
                                 player.position.y = GROUND_Y;
                                 velocity_y = 0.0; // Reset velocity when hitting ground
+                            }
+
+                            // Handle block interaction on mouse click
+                            if left_mouse_clicked || right_mouse_clicked {
+                                // Calculate ray origin: player position + eye height offset
+                                let ray_origin = player.position + Vec3::new(0.0, EYE_HEIGHT, 0.0);
+
+                                // Calculate ray direction from yaw and pitch using spherical coordinates
+                                // At yaw=0, pitch=0: looking toward -Z direction
+                                let ray_direction = Vec3::new(
+                                    -player.rotation_yaw.sin() * pitch.cos(),
+                                    pitch.sin(),
+                                    -player.rotation_yaw.cos() * pitch.cos(),
+                                ).normalize();
+
+                                // Perform raycast against voxel world
+                                if let Some(hit) = raycast_voxel(
+                                    &render_state.voxel_world,
+                                    ray_origin,
+                                    ray_direction,
+                                    BLOCK_REACH_DISTANCE,
+                                ) {
+                                    let (bx, by, bz) = hit.block_pos;
+                                    let (nx, ny, nz) = hit.face_normal;
+
+                                    if left_mouse_clicked {
+                                        // Left click: destroy block at hit position
+                                        render_state.voxel_world.remove_block(bx, by, bz);
+                                        render_state.rebuild_voxel_mesh();
+                                        log::debug!(
+                                            "Destroyed block at ({}, {}, {})",
+                                            bx, by, bz
+                                        );
+                                    } else if right_mouse_clicked {
+                                        // Right click: place block adjacent to hit face
+                                        let (px, py, pz) = (bx + nx, by + ny, bz + nz);
+                                        render_state.voxel_world.set_block(px, py, pz, selected_block_type);
+                                        render_state.rebuild_voxel_mesh();
+                                        log::debug!(
+                                            "Placed {:?} block at ({}, {}, {})",
+                                            selected_block_type,
+                                            px, py, pz
+                                        );
+                                    }
+                                }
+
+                                // Clear click flags after processing
+                                left_mouse_clicked = false;
+                                right_mouse_clicked = false;
                             }
 
                             // Update camera to follow player
@@ -549,6 +631,11 @@ fn main() {
                     if cursor_captured {
                         // Update player yaw based on mouse X movement
                         player.rotation_yaw -= delta.0 as f32 * MOUSE_SENSITIVITY;
+
+                        // Update pitch based on mouse Y movement (for raycasting)
+                        // Clamp to ±89 degrees to prevent gimbal lock at poles
+                        pitch -= delta.1 as f32 * MOUSE_SENSITIVITY;
+                        pitch = pitch.clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
 
                         // Update camera based on new player orientation
                         let (camera_pos, camera_target) = calculate_camera_from_player(&player);
@@ -815,5 +902,138 @@ mod tests {
     fn test_ground_level_is_zero() {
         // GROUND_Y should be 0 so player stands at origin height
         assert_eq!(GROUND_Y, 0.0, "Ground level should be at Y=0");
+    }
+
+    /// Helper to calculate ray direction from yaw and pitch (same logic as in game loop)
+    fn ray_direction_from_yaw_pitch(yaw: f32, pitch: f32) -> Vec3 {
+        Vec3::new(
+            -yaw.sin() * pitch.cos(),
+            pitch.sin(),
+            -yaw.cos() * pitch.cos(),
+        ).normalize()
+    }
+
+    #[test]
+    fn test_ray_direction_at_zero_yaw_zero_pitch() {
+        // At yaw=0, pitch=0: looking toward -Z direction
+        let dir = ray_direction_from_yaw_pitch(0.0, 0.0);
+        assert!(dir.x.abs() < 0.001, "Ray X should be 0 at yaw=0, pitch=0");
+        assert!(dir.y.abs() < 0.001, "Ray Y should be 0 at pitch=0");
+        assert!((dir.z + 1.0).abs() < 0.001, "Ray Z should be -1 at yaw=0, pitch=0");
+    }
+
+    #[test]
+    fn test_ray_direction_at_90_degrees_yaw() {
+        // At yaw=PI/2, pitch=0: looking toward -X direction
+        let dir = ray_direction_from_yaw_pitch(PI / 2.0, 0.0);
+        assert!((dir.x + 1.0).abs() < 0.001, "Ray X should be -1 at yaw=PI/2, pitch=0");
+        assert!(dir.y.abs() < 0.001, "Ray Y should be 0 at pitch=0");
+        assert!(dir.z.abs() < 0.001, "Ray Z should be 0 at yaw=PI/2, pitch=0");
+    }
+
+    #[test]
+    fn test_ray_direction_looking_up() {
+        // At yaw=0, pitch=PI/4 (45 degrees up): looking upward at -Z direction
+        let dir = ray_direction_from_yaw_pitch(0.0, PI / 4.0);
+        assert!(dir.x.abs() < 0.001, "Ray X should be 0 at yaw=0");
+        assert!(dir.y > 0.5, "Ray Y should be positive when looking up");
+        assert!(dir.z < 0.0, "Ray Z should be negative at yaw=0");
+        assert!((dir.length() - 1.0).abs() < 0.001, "Ray should be normalized");
+    }
+
+    #[test]
+    fn test_ray_direction_looking_down() {
+        // At yaw=0, pitch=-PI/4 (45 degrees down): looking downward at -Z direction
+        let dir = ray_direction_from_yaw_pitch(0.0, -PI / 4.0);
+        assert!(dir.x.abs() < 0.001, "Ray X should be 0 at yaw=0");
+        assert!(dir.y < -0.5, "Ray Y should be negative when looking down");
+        assert!(dir.z < 0.0, "Ray Z should be negative at yaw=0");
+        assert!((dir.length() - 1.0).abs() < 0.001, "Ray should be normalized");
+    }
+
+    #[test]
+    fn test_ray_direction_is_normalized() {
+        // Test various yaw/pitch combinations produce unit vectors
+        for yaw in [0.0, PI / 4.0, PI / 2.0, PI, 3.0 * PI / 2.0] {
+            for pitch in [-PI / 3.0, -PI / 6.0, 0.0, PI / 6.0, PI / 3.0] {
+                let dir = ray_direction_from_yaw_pitch(yaw, pitch);
+                assert!(
+                    (dir.length() - 1.0).abs() < 0.001,
+                    "Ray direction should be normalized at yaw={}, pitch={}",
+                    yaw, pitch
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pitch_clamping_bounds() {
+        // Verify pitch clamping bounds are correct (±89 degrees)
+        let max_pitch = 89.0_f32.to_radians();
+        let min_pitch = -89.0_f32.to_radians();
+
+        // Test that clamping produces expected results
+        let over_max = 100.0_f32.to_radians();
+        let under_min = -100.0_f32.to_radians();
+
+        let clamped_over = over_max.clamp(min_pitch, max_pitch);
+        let clamped_under = under_min.clamp(min_pitch, max_pitch);
+
+        assert!((clamped_over - max_pitch).abs() < 0.001);
+        assert!((clamped_under - min_pitch).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_block_placement_position_from_face_normal() {
+        use glam::IVec3;
+
+        // Simulate block placement: position = hit.block_pos + hit.face_normal
+        let hit_block = IVec3::new(5, 3, 10);
+
+        // Hitting top face (normal = +Y): place block above
+        let top_normal = IVec3::new(0, 1, 0);
+        let place_pos = hit_block + top_normal;
+        assert_eq!(place_pos, IVec3::new(5, 4, 10));
+
+        // Hitting bottom face (normal = -Y): place block below
+        let bottom_normal = IVec3::new(0, -1, 0);
+        let place_pos = hit_block + bottom_normal;
+        assert_eq!(place_pos, IVec3::new(5, 2, 10));
+
+        // Hitting north face (normal = -Z): place block in front
+        let north_normal = IVec3::new(0, 0, -1);
+        let place_pos = hit_block + north_normal;
+        assert_eq!(place_pos, IVec3::new(5, 3, 9));
+
+        // Hitting south face (normal = +Z): place block behind
+        let south_normal = IVec3::new(0, 0, 1);
+        let place_pos = hit_block + south_normal;
+        assert_eq!(place_pos, IVec3::new(5, 3, 11));
+
+        // Hitting west face (normal = -X): place block to west
+        let west_normal = IVec3::new(-1, 0, 0);
+        let place_pos = hit_block + west_normal;
+        assert_eq!(place_pos, IVec3::new(4, 3, 10));
+
+        // Hitting east face (normal = +X): place block to east
+        let east_normal = IVec3::new(1, 0, 0);
+        let place_pos = hit_block + east_normal;
+        assert_eq!(place_pos, IVec3::new(6, 3, 10));
+    }
+
+    #[test]
+    fn test_block_reach_distance_reasonable() {
+        // Block reach should be positive and within reasonable bounds
+        assert!(BLOCK_REACH_DISTANCE > 0.0, "Block reach should be positive");
+        assert!(BLOCK_REACH_DISTANCE <= 10.0, "Block reach should not be too far");
+        assert!(BLOCK_REACH_DISTANCE >= 3.0, "Block reach should allow at least 3 blocks");
+    }
+
+    #[test]
+    fn test_eye_height_reasonable() {
+        // Eye height should be positive and at reasonable human height
+        assert!(EYE_HEIGHT > 0.0, "Eye height should be positive");
+        assert!(EYE_HEIGHT <= 2.0, "Eye height should be at most 2 units");
+        assert!(EYE_HEIGHT >= 1.0, "Eye height should be at least 1 unit");
     }
 }

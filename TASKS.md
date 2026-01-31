@@ -75,7 +75,7 @@
 ## 3D World - Minecraft-like Environment
 - [x] Add: Block type system → Define block types (grass, dirt, stone, cobblestone, wood) with associated textures
 - [x] Add: Voxel world generation → Generate a simple flat world with grass on top, dirt below, stone deeper → Note: VoxelWorld struct with generate_flat_world() creates 16x16 terrain (grass at y=0, dirt at y=-1/-2, stone at y=-3/-4)
-- [ ] Add: Block placement/destruction → Player can place and break blocks (left click destroy, right click place)
+- [x] Add: Block placement/destruction → Player can place and break blocks (left click destroy, right click place) → Note: Added pitch tracking for vertical look, raycast-based block interaction using existing raycast_voxel()
 - [ ] Add: Block face culling → Don't render faces between adjacent solid blocks (performance optimization)
 - [ ] Add: Chunk-based world storage → World divided into 16x16x16 chunks for efficient rendering/storage
 

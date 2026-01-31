@@ -172,6 +172,67 @@ pub mod texture {
         })
     }
 
+    /// Load the block texture atlas for voxel rendering.
+    ///
+    /// Tries to load cobblestone.png from the textures directory, falling back to a
+    /// procedural checkerboard pattern if the file is not available.
+    pub fn load_block_texture_atlas(device: &Device, queue: &Queue) -> Texture {
+        let texture_path = std::path::Path::new("textures/default-textures/textures/blocks/cobblestone.png");
+        if texture_path.exists() {
+            if let Ok(texture) = load_png(device, queue, texture_path) {
+                return texture;
+            }
+        }
+
+        // Create a simple 16x16 checkerboard fallback texture
+        let mut fallback_data = vec![0u8; 16 * 16 * 4];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 4;
+                let is_light = (x / 4 + y / 4) % 2 == 0;
+                let color = if is_light { 200u8 } else { 100u8 };
+                fallback_data[idx] = color;     // R
+                fallback_data[idx + 1] = color; // G
+                fallback_data[idx + 2] = color; // B
+                fallback_data[idx + 3] = 255;   // A
+            }
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Fallback Block Texture"),
+            size: wgpu::Extent3d {
+                width: 16,
+                height: 16,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &fallback_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(16 * 4),
+                rows_per_image: Some(16),
+            },
+            wgpu::Extent3d {
+                width: 16,
+                height: 16,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture
+    }
+
     /// Holds loaded textures and a sampler for rendering.
     pub struct TextureLoader {
         /// Loaded block textures, keyed by filename without extension
@@ -377,6 +438,11 @@ pub mod voxel {
             self.blocks.insert((x, y, z), block_type);
         }
 
+        /// Remove a block at the given position, returning the removed block type if any
+        pub fn remove_block(&mut self, x: i32, y: i32, z: i32) -> Option<BlockType> {
+            self.blocks.remove(&(x, y, z))
+        }
+
         /// Get the number of blocks in the world
         pub fn block_count(&self) -> usize {
             self.blocks.len()
@@ -412,6 +478,111 @@ pub mod voxel {
         fn default() -> Self {
             Self::new()
         }
+    }
+}
+
+/// Raycasting module for block interaction (placement and destruction)
+pub mod raycast {
+    use super::voxel::VoxelWorld;
+    use glam::Vec3;
+
+    /// Result of a successful raycast hit
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct RaycastHit {
+        /// The block position that was hit
+        pub block_pos: (i32, i32, i32),
+        /// The face normal of the hit (used for block placement)
+        pub face_normal: (i32, i32, i32),
+    }
+
+    /// Cast a ray through the voxel world using DDA algorithm.
+    /// Returns the first solid block hit within max_distance, along with the face normal.
+    ///
+    /// # Arguments
+    /// * `world` - The voxel world to raycast against
+    /// * `origin` - Ray starting position (usually camera/eye position)
+    /// * `direction` - Ray direction (normalized look direction)
+    /// * `max_distance` - Maximum distance to check (in blocks)
+    pub fn raycast_voxel(
+        world: &VoxelWorld,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+    ) -> Option<RaycastHit> {
+        // Normalize direction to ensure consistent stepping
+        let dir = direction.normalize();
+
+        // Handle zero direction components to avoid division by zero
+        let dir_x = if dir.x.abs() < 1e-10 { 1e-10 } else { dir.x };
+        let dir_y = if dir.y.abs() < 1e-10 { 1e-10 } else { dir.y };
+        let dir_z = if dir.z.abs() < 1e-10 { 1e-10 } else { dir.z };
+
+        // Current voxel position
+        let mut voxel_x = origin.x.floor() as i32;
+        let mut voxel_y = origin.y.floor() as i32;
+        let mut voxel_z = origin.z.floor() as i32;
+
+        // Step direction for each axis (-1 or 1)
+        let step_x = if dir_x > 0.0 { 1 } else { -1 };
+        let step_y = if dir_y > 0.0 { 1 } else { -1 };
+        let step_z = if dir_z > 0.0 { 1 } else { -1 };
+
+        // Distance along ray to next voxel boundary for each axis
+        let t_delta_x = (1.0 / dir_x).abs();
+        let t_delta_y = (1.0 / dir_y).abs();
+        let t_delta_z = (1.0 / dir_z).abs();
+
+        // Initial t values to first voxel boundary
+        let mut t_max_x = if dir_x > 0.0 {
+            ((voxel_x + 1) as f32 - origin.x) / dir_x
+        } else {
+            (voxel_x as f32 - origin.x) / dir_x
+        };
+        let mut t_max_y = if dir_y > 0.0 {
+            ((voxel_y + 1) as f32 - origin.y) / dir_y
+        } else {
+            (voxel_y as f32 - origin.y) / dir_y
+        };
+        let mut t_max_z = if dir_z > 0.0 {
+            ((voxel_z + 1) as f32 - origin.z) / dir_z
+        } else {
+            (voxel_z as f32 - origin.z) / dir_z
+        };
+
+        // Track which face we entered from
+        let mut face_normal = (0, 0, 0);
+        let mut distance_traveled = 0.0;
+
+        // DDA loop
+        while distance_traveled < max_distance {
+            // Check if current voxel contains a block
+            if world.get_block(voxel_x, voxel_y, voxel_z).is_some() {
+                return Some(RaycastHit {
+                    block_pos: (voxel_x, voxel_y, voxel_z),
+                    face_normal,
+                });
+            }
+
+            // Step to next voxel boundary along the closest axis
+            if t_max_x < t_max_y && t_max_x < t_max_z {
+                distance_traveled = t_max_x;
+                t_max_x += t_delta_x;
+                voxel_x += step_x;
+                face_normal = (-step_x, 0, 0);
+            } else if t_max_y < t_max_z {
+                distance_traveled = t_max_y;
+                t_max_y += t_delta_y;
+                voxel_y += step_y;
+                face_normal = (0, -step_y, 0);
+            } else {
+                distance_traveled = t_max_z;
+                t_max_z += t_delta_z;
+                voxel_z += step_z;
+                face_normal = (0, 0, -step_z);
+            }
+        }
+
+        None
     }
 }
 
@@ -1155,6 +1326,8 @@ pub mod render {
         pub size: PhysicalSize<u32>,
         pub window: Arc<Window>,
         pub camera: Camera,
+        /// The voxel world containing all blocks
+        pub voxel_world: crate::voxel::VoxelWorld,
         vertex_buffer: Buffer,
         index_buffer: Buffer,
         num_indices: u32,
@@ -1170,6 +1343,13 @@ pub mod render {
         static_objects_vertex_buffer: Buffer,
         static_objects_index_buffer: Buffer,
         static_objects_num_indices: u32,
+        // Voxel world buffers
+        voxel_vertex_buffer: Buffer,
+        voxel_index_buffer: Buffer,
+        voxel_num_indices: u32,
+        // Textured rendering pipeline for voxels
+        textured_bind_group: BindGroup,
+        textured_pipeline: RenderPipeline,
         uniform_buffer: Buffer,
         #[allow(dead_code)] // Scaffolding for future lighting features
         light_uniform_buffer: Buffer,
@@ -1189,6 +1369,8 @@ pub mod render {
         pub camera: Camera,
         pub width: u32,
         pub height: u32,
+        /// The voxel world containing all blocks
+        pub voxel_world: crate::voxel::VoxelWorld,
         render_texture: wgpu::Texture,
         vertex_buffer: Buffer,
         index_buffer: Buffer,
@@ -1340,18 +1522,18 @@ pub mod render {
             });
             let textured_objects_num_indices = textured_objects_indices.len() as u32;
 
-            // Create voxel world mesh buffers
+            // Create voxel world mesh buffers (with COPY_DST for dynamic updates)
             let voxel_world = crate::voxel::VoxelWorld::generate_flat_world();
             let (voxel_vertices, voxel_indices) = voxel_world.build_mesh();
             let voxel_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Voxel World Vertex Buffer"),
                 contents: bytemuck::cast_slice(&voxel_vertices),
-                usage: BufferUsages::VERTEX,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             });
             let voxel_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Voxel World Index Buffer"),
                 contents: bytemuck::cast_slice(&voxel_indices),
-                usage: BufferUsages::INDEX,
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
             });
             let voxel_num_indices = voxel_indices.len() as u32;
 
@@ -1629,6 +1811,7 @@ pub mod render {
                 camera,
                 width,
                 height,
+                voxel_world,
                 render_texture,
                 vertex_buffer,
                 index_buffer,
@@ -2026,6 +2209,25 @@ pub mod render {
 
             &self.render_texture
         }
+
+        /// Rebuild voxel mesh buffers after world changes (block placement/destruction).
+        /// This recreates the vertex and index buffers from the current voxel_world state.
+        pub fn rebuild_voxel_mesh(&mut self) {
+            let (voxel_vertices, voxel_indices) = self.voxel_world.build_mesh();
+
+            // Recreate buffers with new data
+            self.voxel_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Vertex Buffer"),
+                contents: bytemuck::cast_slice(&voxel_vertices),
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            });
+            self.voxel_index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Index Buffer"),
+                contents: bytemuck::cast_slice(&voxel_indices),
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            });
+            self.voxel_num_indices = voxel_indices.len() as u32;
+        }
     }
 
     impl<'window> RenderState<'window> {
@@ -2157,6 +2359,26 @@ pub mod render {
             });
             let static_objects_num_indices = static_objects_indices.len() as u32;
 
+            // Create voxel world mesh buffers (with COPY_DST for dynamic updates)
+            let voxel_world = crate::voxel::VoxelWorld::generate_flat_world();
+            let (voxel_vertices, voxel_indices) = voxel_world.build_mesh();
+            let voxel_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Vertex Buffer"),
+                contents: bytemuck::cast_slice(&voxel_vertices),
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            });
+            let voxel_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Index Buffer"),
+                contents: bytemuck::cast_slice(&voxel_indices),
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            });
+            let voxel_num_indices = voxel_indices.len() as u32;
+
+            // Load block texture atlas for voxel rendering
+            let block_texture = crate::texture::load_block_texture_atlas(&device, &queue);
+            let block_texture_view = block_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let block_sampler = crate::texture::create_pixel_art_sampler(&device);
+
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("MVP Uniform Buffer"),
@@ -2215,13 +2437,90 @@ pub mod render {
                 ],
             });
 
+            // Create textured bind group layout (MVP uniform + texture + sampler + light uniform)
+            let textured_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Textured Bind Group Layout"),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::VERTEX,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+            // Create textured bind group
+            let textured_bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Textured Bind Group"),
+                layout: &textured_bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&block_texture_view),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&block_sampler),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: light_uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
             // Load shader
             let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+
+            // Load textured shader
+            let textured_shader = device.create_shader_module(include_wgsl!("textured_shader.wgsl"));
 
             // Create pipeline layout
             let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+            // Create textured pipeline layout
+            let textured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Textured Render Pipeline Layout"),
+                bind_group_layouts: &[&textured_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -2257,6 +2556,38 @@ pub mod render {
                 multiview: None,
             });
 
+            // Create textured render pipeline
+            let textured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("Textured Render Pipeline"),
+                layout: Some(&textured_pipeline_layout),
+                vertex: VertexState {
+                    module: &textured_shader,
+                    entry_point: "vs_main",
+                    buffers: &[TexturedVertex::desc()],
+                },
+                fragment: Some(FragmentState {
+                    module: &textured_shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(surface_format.into())],
+                }),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            });
+
             Self {
                 surface,
                 device,
@@ -2265,6 +2596,7 @@ pub mod render {
                 size,
                 window,
                 camera,
+                voxel_world,
                 vertex_buffer,
                 index_buffer,
                 num_indices,
@@ -2280,6 +2612,11 @@ pub mod render {
                 static_objects_vertex_buffer,
                 static_objects_index_buffer,
                 static_objects_num_indices,
+                voxel_vertex_buffer,
+                voxel_index_buffer,
+                voxel_num_indices,
+                textured_bind_group,
+                textured_pipeline,
                 uniform_buffer,
                 light_uniform_buffer,
                 bind_group,
@@ -2362,6 +2699,30 @@ pub mod render {
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
             }
 
+            // Draw voxel world terrain with textured pipeline
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Voxel World Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.textured_pipeline);
+                render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.voxel_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.voxel_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.voxel_num_indices, 0, 0..1);
+            }
+
             // We need to end the render pass to update the uniform buffer for each player
             // Then create a new render pass for each player with their model matrix
             // This is inefficient but works without changing the shader
@@ -2428,6 +2789,25 @@ pub mod render {
             output.present();
 
             Ok(())
+        }
+
+        /// Rebuild voxel mesh buffers after world changes (block placement/destruction).
+        /// This recreates the vertex and index buffers from the current voxel_world state.
+        pub fn rebuild_voxel_mesh(&mut self) {
+            let (voxel_vertices, voxel_indices) = self.voxel_world.build_mesh();
+
+            // Recreate buffers with new data
+            self.voxel_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Vertex Buffer"),
+                contents: bytemuck::cast_slice(&voxel_vertices),
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            });
+            self.voxel_index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Index Buffer"),
+                contents: bytemuck::cast_slice(&voxel_indices),
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            });
+            self.voxel_num_indices = voxel_indices.len() as u32;
         }
     }
 }
