@@ -312,6 +312,109 @@ pub mod blocks {
     }
 }
 
+/// Voxel world generation and management
+pub mod voxel {
+    use crate::blocks::BlockType;
+    use crate::render::TexturedVertex;
+    use std::collections::HashMap;
+
+    /// World size constants
+    pub const WORLD_SIZE_X: i32 = 16;
+    pub const WORLD_SIZE_Z: i32 = 16;
+    pub const WORLD_MIN_Y: i32 = -4;
+    pub const WORLD_MAX_Y: i32 = 0;
+
+    /// A voxel world containing block data
+    #[derive(Debug, Clone)]
+    pub struct VoxelWorld {
+        /// Block data stored by position (x, y, z)
+        pub blocks: HashMap<(i32, i32, i32), BlockType>,
+    }
+
+    impl VoxelWorld {
+        /// Create an empty voxel world
+        pub fn new() -> Self {
+            Self {
+                blocks: HashMap::new(),
+            }
+        }
+
+        /// Generate a flat world with layered terrain:
+        /// - y=0: Grass blocks
+        /// - y=-1, y=-2: Dirt blocks
+        /// - y=-3, y=-4: Stone blocks
+        ///
+        /// World spans x: -8 to 7, z: -8 to 7 (16x16 blocks centered at origin)
+        pub fn generate_flat_world() -> Self {
+            let mut world = Self::new();
+
+            let half_x = WORLD_SIZE_X / 2;
+            let half_z = WORLD_SIZE_Z / 2;
+
+            for x in -half_x..half_x {
+                for z in -half_z..half_z {
+                    for y in WORLD_MIN_Y..=WORLD_MAX_Y {
+                        let block_type = match y {
+                            0 => BlockType::Grass,
+                            -1 | -2 => BlockType::Dirt,
+                            _ => BlockType::Stone, // y <= -3
+                        };
+                        world.blocks.insert((x, y, z), block_type);
+                    }
+                }
+            }
+
+            world
+        }
+
+        /// Get the block at the given position, if any
+        pub fn get_block(&self, x: i32, y: i32, z: i32) -> Option<&BlockType> {
+            self.blocks.get(&(x, y, z))
+        }
+
+        /// Set a block at the given position
+        pub fn set_block(&mut self, x: i32, y: i32, z: i32, block_type: BlockType) {
+            self.blocks.insert((x, y, z), block_type);
+        }
+
+        /// Get the number of blocks in the world
+        pub fn block_count(&self) -> usize {
+            self.blocks.len()
+        }
+
+        /// Build a mesh of all blocks in the world.
+        /// Returns (vertices, indices) for rendering with the textured pipeline.
+        pub fn build_mesh(&self) -> (Vec<TexturedVertex>, Vec<u16>) {
+            let mut vertices = Vec::with_capacity(self.blocks.len() * 24);
+            let mut indices = Vec::with_capacity(self.blocks.len() * 36);
+
+            let mut block_index = 0u16;
+            for ((x, y, z), _block_type) in &self.blocks {
+                // Convert block coordinates to world position (each block is 1x1x1)
+                let offset = (*x as f32, *y as f32, *z as f32);
+                let size = (1.0, 1.0, 1.0);
+
+                // Use white color so texture shows through
+                let cube_verts = crate::render::create_textured_cube_vertices(size, offset, [1.0, 1.0, 1.0]);
+                vertices.extend_from_slice(&cube_verts);
+
+                let cube_indices = crate::render::create_textured_cube_indices(block_index * 24);
+                indices.extend_from_slice(&cube_indices);
+
+                block_index += 1;
+            }
+
+            (vertices, indices)
+        }
+    }
+
+    impl Default for VoxelWorld {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+}
+
 /// Shared types for player state and game data
 pub mod types {
     use super::*;
@@ -1103,6 +1206,10 @@ pub mod render {
         textured_objects_vertex_buffer: Buffer,
         textured_objects_index_buffer: Buffer,
         textured_objects_num_indices: u32,
+        // Voxel world buffers
+        voxel_vertex_buffer: Buffer,
+        voxel_index_buffer: Buffer,
+        voxel_num_indices: u32,
         textured_bind_group: BindGroup,
         textured_pipeline: RenderPipeline,
         uniform_buffer: Buffer,
@@ -1232,6 +1339,21 @@ pub mod render {
                 usage: BufferUsages::INDEX,
             });
             let textured_objects_num_indices = textured_objects_indices.len() as u32;
+
+            // Create voxel world mesh buffers
+            let voxel_world = crate::voxel::VoxelWorld::generate_flat_world();
+            let (voxel_vertices, voxel_indices) = voxel_world.build_mesh();
+            let voxel_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Vertex Buffer"),
+                contents: bytemuck::cast_slice(&voxel_vertices),
+                usage: BufferUsages::VERTEX,
+            });
+            let voxel_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel World Index Buffer"),
+                contents: bytemuck::cast_slice(&voxel_indices),
+                usage: BufferUsages::INDEX,
+            });
+            let voxel_num_indices = voxel_indices.len() as u32;
 
             // Create uniform buffer for MVP matrix (64 bytes = 4x4 f32 matrix)
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1523,6 +1645,9 @@ pub mod render {
                 textured_objects_vertex_buffer,
                 textured_objects_index_buffer,
                 textured_objects_num_indices,
+                voxel_vertex_buffer,
+                voxel_index_buffer,
+                voxel_num_indices,
                 textured_bind_group,
                 textured_pipeline,
                 uniform_buffer,
@@ -1604,6 +1729,30 @@ pub mod render {
                 render_pass.set_vertex_buffer(0, self.textured_objects_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.textured_objects_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.textured_objects_num_indices, 0, 0..1);
+            }
+
+            // Draw voxel world terrain with textured pipeline
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Voxel World Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.textured_pipeline);
+                render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.voxel_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.voxel_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.voxel_num_indices, 0, 0..1);
             }
 
             // Draw local player (blue humanoid) at their position
@@ -1747,6 +1896,30 @@ pub mod render {
                 render_pass.set_vertex_buffer(0, self.textured_objects_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(self.textured_objects_index_buffer.slice(..), IndexFormat::Uint16);
                 render_pass.draw_indexed(0..self.textured_objects_num_indices, 0, 0..1);
+            }
+
+            // Draw voxel world terrain with textured pipeline
+            {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Headless Voxel World Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Load,
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.textured_pipeline);
+                render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.voxel_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.voxel_index_buffer.slice(..), IndexFormat::Uint16);
+                render_pass.draw_indexed(0..self.voxel_num_indices, 0, 0..1);
             }
 
             // Draw dynamic boxes
@@ -3533,5 +3706,170 @@ mod tests {
         assert_eq!(map.get(&BlockType::Grass), Some(&"grass_block"));
         assert_eq!(map.get(&BlockType::Dirt), Some(&"dirt_block"));
         assert_eq!(map.get(&BlockType::Stone), None);
+    }
+
+    // Voxel world tests
+    #[test]
+    fn test_voxel_world_new_empty() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::new();
+        assert_eq!(world.block_count(), 0);
+    }
+
+    #[test]
+    fn test_voxel_world_set_and_get_block() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let mut world = VoxelWorld::new();
+        world.set_block(0, 0, 0, BlockType::Grass);
+
+        assert_eq!(world.get_block(0, 0, 0), Some(&BlockType::Grass));
+        assert_eq!(world.get_block(1, 0, 0), None);
+    }
+
+    #[test]
+    fn test_voxel_generate_flat_world_block_count() {
+        use crate::voxel::{VoxelWorld, WORLD_SIZE_X, WORLD_SIZE_Z, WORLD_MIN_Y, WORLD_MAX_Y};
+
+        let world = VoxelWorld::generate_flat_world();
+
+        // World is 16x16 blocks (x: -8 to 7, z: -8 to 7)
+        // Depth is 5 layers (y: -4 to 0)
+        let expected_blocks = (WORLD_SIZE_X * WORLD_SIZE_Z * (WORLD_MAX_Y - WORLD_MIN_Y + 1)) as usize;
+        assert_eq!(world.block_count(), expected_blocks);
+    }
+
+    #[test]
+    fn test_voxel_generate_flat_world_grass_on_top() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+
+        // All blocks at y=0 should be grass
+        for x in -8..8 {
+            for z in -8..8 {
+                assert_eq!(
+                    world.get_block(x, 0, z),
+                    Some(&BlockType::Grass),
+                    "Block at ({}, 0, {}) should be Grass",
+                    x, z
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_voxel_generate_flat_world_dirt_below_grass() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+
+        // All blocks at y=-1 and y=-2 should be dirt
+        for x in -8..8 {
+            for z in -8..8 {
+                assert_eq!(
+                    world.get_block(x, -1, z),
+                    Some(&BlockType::Dirt),
+                    "Block at ({}, -1, {}) should be Dirt",
+                    x, z
+                );
+                assert_eq!(
+                    world.get_block(x, -2, z),
+                    Some(&BlockType::Dirt),
+                    "Block at ({}, -2, {}) should be Dirt",
+                    x, z
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_voxel_generate_flat_world_stone_at_bottom() {
+        use crate::blocks::BlockType;
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+
+        // All blocks at y=-3 and y=-4 should be stone
+        for x in -8..8 {
+            for z in -8..8 {
+                assert_eq!(
+                    world.get_block(x, -3, z),
+                    Some(&BlockType::Stone),
+                    "Block at ({}, -3, {}) should be Stone",
+                    x, z
+                );
+                assert_eq!(
+                    world.get_block(x, -4, z),
+                    Some(&BlockType::Stone),
+                    "Block at ({}, -4, {}) should be Stone",
+                    x, z
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_voxel_build_mesh_vertex_count() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+        let (vertices, _) = world.build_mesh();
+
+        // Each block has 24 vertices (4 per face * 6 faces)
+        let expected_vertices = world.block_count() * 24;
+        assert_eq!(vertices.len(), expected_vertices);
+    }
+
+    #[test]
+    fn test_voxel_build_mesh_index_count() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+        let (_, indices) = world.build_mesh();
+
+        // Each block has 36 indices (6 faces * 2 triangles * 3 vertices)
+        let expected_indices = world.block_count() * 36;
+        assert_eq!(indices.len(), expected_indices);
+    }
+
+    #[test]
+    fn test_voxel_build_mesh_indices_valid() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::generate_flat_world();
+        let (vertices, indices) = world.build_mesh();
+
+        // All indices should be within vertex bounds
+        for &index in &indices {
+            assert!(
+                (index as usize) < vertices.len(),
+                "Index {} out of bounds for {} vertices",
+                index,
+                vertices.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_voxel_world_default() {
+        use crate::voxel::VoxelWorld;
+
+        let world = VoxelWorld::default();
+        assert_eq!(world.block_count(), 0);
+    }
+
+    #[test]
+    fn test_voxel_world_constants() {
+        use crate::voxel::{WORLD_SIZE_X, WORLD_SIZE_Z, WORLD_MIN_Y, WORLD_MAX_Y};
+
+        assert_eq!(WORLD_SIZE_X, 16);
+        assert_eq!(WORLD_SIZE_Z, 16);
+        assert_eq!(WORLD_MIN_Y, -4);
+        assert_eq!(WORLD_MAX_Y, 0);
     }
 }
