@@ -44,7 +44,7 @@
 
 ## Local Build & Testing Infrastructure
 - [x] Add: Document local compilation steps in CONTEXT.md → Commands section includes `cargo build` prerequisites and platform-specific notes
-- [ ] Add: Create `tests/screenshots/` directory with .gitkeep → `ls tests/screenshots/` shows the directory exists
+- [x] Add: Create `tests/screenshots/` directory with .gitkeep → `ls tests/screenshots/` shows the directory exists
 - [ ] Add: Screenshot capture utility function in test helpers → Function takes wgpu surface/texture and saves PNG to specified path
 
 ## Single-Player Integration Tests with Screenshots
